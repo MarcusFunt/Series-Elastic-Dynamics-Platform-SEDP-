@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+.idea/
+.vscode/
+.DS_Store
+*.log
+runs/
+checkpoints/
+*.csv~
+*.mat
+*.fmu
+openmodelica/*_res.mat
+openmodelica/*.log

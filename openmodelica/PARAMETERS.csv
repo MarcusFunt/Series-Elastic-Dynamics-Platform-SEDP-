@@ -1,0 +1,22 @@
+parameter,value,unit,status
+carriageMass,0.45,kg,placeholder
+resonatorMass,0.12,kg,placeholder
+leverCOM,0.095,m,placeholder
+leverInertiaCOM,0.00018,kg.m2,placeholder
+kTheta,0.42,N.m/rad,Python-model baseline
+cTheta,0.006,N.m.s/rad,Python-model baseline
+springAnchorHalfSpacing,0.035,m,placeholder from current visual geometry
+springAnchorY,-0.015,m,placeholder from current visual geometry
+springShaftRadius,0.040,m,placeholder from current visual geometry
+springK,500,N/m,placeholder
+springD,1.0,N.s/m,placeholder
+springFreeLength,0.010,m,placeholder/preload-sensitive
+motorInertia,0.00005,kg.m2,Python-model baseline
+motorHoldTorque,0.48,N.m,Python-model baseline
+motorOmegaCorner,55,rad/s,Python-model baseline
+pulleyTeeth,20,1,selected baseline
+beltPitch,0.002,m,GT2
+beltStiffness,6500,N/m,Python-model baseline
+beltDamping,18,N.s/m,Python-model baseline
+railHalfTravel,0.065,m,software working range
+imuRadius,0.075,m,Python-model baseline

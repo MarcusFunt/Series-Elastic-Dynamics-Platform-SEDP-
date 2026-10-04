@@ -1,0 +1,81 @@
+system:
+  name: Series-Elastic Dynamics Platform
+  acronym: SEDP
+  description: >
+    A motor-driven horizontal carriage carrying a deliberately compliant
+    single-axis rotary resonator. The resonator is intentionally excited by
+    aggressive carriage acceleration. Feedback actively removes oscillation
+    energy by moving the base. The same elastic mechanism can also be used as
+    a force-feedback/haptic input device. This is not primarily an inverted
+    pendulum balancing project and not primarily an input-shaping project.
+
+mechanics:
+  base_axis:
+    type: prismatic
+    coordinate: x
+    units: m
+    guide: MGN7
+    nominal_physical_travel_m: 0.150
+    transmission: GT2_belt
+  resonator:
+    type: revolute
+    coordinate: theta
+    units: rad
+    constrained_axes: 1
+    passive_damping: intentionally_low
+    springs:
+      count: 2
+      topology: common_shaft_attachment_to_left_and_right_carriage_anchors
+
+actuator:
+  motor:
+    type: stepper
+    family: NEMA17
+    driver: TMC2209
+    coordinate: phi_m
+  controller: RP2350
+
+sensors:
+  motor_encoder:
+    type: AS5600
+    measures: phi_m
+    bus: I2C0
+  resonator_encoder:
+    type: AS5600
+    measures: theta
+    bus: I2C1
+  resonator_imu:
+    type: six_axis
+    bus: SPI
+    measures: [angular_velocity, specific_force]
+  optional_carriage_encoder:
+    measures: x
+
+generalized_coordinates:
+  reduced: [x, theta]
+  full: [phi_m, x, theta]
+
+python_state: [phi_m, omega_m, x, x_dot, theta, theta_dot, tau_act]
+
+control_objective:
+  active_dynamics: >
+    Execute aggressive carriage trajectories while actively removing energy
+    from the compliant resonator and respecting rail/actuator constraints.
+  haptic_mode: >
+    Use calibrated spring deformation as a force estimate and position the
+    motor so measured force tracks a requested virtual or remote force.
+
+controllers:
+  implemented: [servo, LQR, motor_position, residual_PPO]
+  planned: [LQG, MPC, adaptive_control]
+
+embedded_architecture:
+  core0: [sensor_snapshot, state_estimation, spring_force_model, inner_control, safety, motor_command]
+  core1: [trajectory, LQR, MPC, RL, haptics, system_identification, USB, logging]
+  PIO: [STEP_DIR_generation]
+
+important_notes:
+  - resonance_is_deliberate
+  - active_feedback_is_the_primary_demo
+  - input_shaping_is_only_a_comparison_baseline
+  - hardware_has_not_yet_been_physically_validated

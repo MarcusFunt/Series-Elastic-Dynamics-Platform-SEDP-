@@ -1,0 +1,18 @@
+loadModel(Modelica, {"4.0.0"});
+loadFile("ActiveVibrationRig.mo");
+getErrorString();
+
+simulate(ActiveVibrationRig.Examples.BaselineAggressive,
+  startTime=0, stopTime=8, numberOfIntervals=8000, tolerance=1e-7,
+  outputFormat="csv", fileNamePrefix="baseline_aggressive");
+getErrorString();
+
+simulate(ActiveVibrationRig.Examples.ActiveDampingAggressive,
+  startTime=0, stopTime=8, numberOfIntervals=8000, tolerance=1e-7,
+  outputFormat="csv", fileNamePrefix="active_damping_aggressive");
+getErrorString();
+
+simulate(ActiveVibrationRig.Examples.FreeDecay,
+  startTime=0, stopTime=6, numberOfIntervals=6000, tolerance=1e-7,
+  outputFormat="csv", fileNamePrefix="free_decay");
+getErrorString();
