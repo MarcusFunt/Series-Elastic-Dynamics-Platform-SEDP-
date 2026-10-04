@@ -1,13 +1,17 @@
 # Trained policy artifacts
 
-## Current policy
+Policy checkpoints are generated experiment artifacts and are intentionally not committed to normal Git history.
 
-`ppo_v3/policy_accepted.pt` is the current benchmark-gated residual-acceleration policy. It is a small learned correction **on top of constrained LQR**, not an end-to-end torque controller.
+The current accepted v3 artifact is named `policy_accepted.pt`. It is a small residual-acceleration policy on top of constrained LQR, and it passed SEDP-B1 in the validated run recorded in `docs/benchmark_B1_fixed.json`.
 
-Promotion rule: a policy must pass the immutable SEDP-B1 tracking, rail, saturation, stop-contact, peak-angle and RMS-angle gates. Reward alone is never sufficient.
+To recreate it:
 
-See `docs/RL_FORMULATION_V3.md` and `docs/benchmark_B1_fixed.json`.
+```bash
+cd software/python
+python pretrain_v3_damping.py --out ../../models/ppo_v3/heuristic_warmstart.pt
+python train_ppo_v3.py --init ../../models/ppo_v3/heuristic_warmstart.pt --steps 8192 --outdir ../../models/ppo_v3
+```
 
-## Legacy
+Stable binary checkpoints should be published through a GitHub Release or Git LFS together with the source commit and benchmark output.
 
-The `ppo_v2/` and `legacy/` artifacts are historical only. They must not be used for headline comparisons: the original full-state LQR / PPO v2 showcase exposed unacceptable aggressive-reversal behavior and a non-reproducible benchmark claim.
+The v2/legacy policies are historical only and must not be used for headline comparisons.
