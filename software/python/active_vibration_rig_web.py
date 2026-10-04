@@ -174,7 +174,7 @@ class Runtime:
                 s.kick(float(msg.get("torque", 0.025)), float(msg.get("duration", 0.06)))
             elif typ == "controller":
                 v = str(msg.get("value", "servo"))
-                if v in {"servo", "lqr", "motor_position", "ppo"}:
+                if v in {"servo", "safe_servo", "energy", "lqr", "lqr_legacy", "motor_position", "ppo"}:
                     s.controller.mode = v
             elif typ == "trajectory":
                 v = str(msg.get("value", "step"))
@@ -324,8 +324,8 @@ svg text{{font-family:Inter,system-ui,sans-serif}} .rail-shadow{{filter:drop-sha
       <div class="panel-title"><b>Motion laboratory</b><span>all changes apply live</span></div>
       <div class="controls">
         <div><div class="group-title">Simulation</div><div class="row"><button class="btn primary" id="playBtn">Pause</button><button class="btn" id="resetBtn">Reset</button><button class="btn warn" id="kickBtn">Kick resonator</button><a class="btn" href="/api/export.csv" download="rig_log.csv" style="text-decoration:none">Export CSV</a></div></div>
-        <div><div class="group-title">Controller</div><div class="seg" id="controllerSeg"><button data-v="servo" class="active">Servo</button><button data-v="lqr">LQR damping</button><button data-v="motor_position">Motor position</button><button data-v="ppo">PPO damping</button></div></div>
-        <div><div class="group-title">Motion</div><div class="seg" id="trajectorySeg"><button data-v="hold">Hold</button><button data-v="step" class="active">Step</button><button data-v="sine">Sine</button><button data-v="chirp">Chirp</button><button data-v="aggressive">Aggressive</button><button data-v="manual">Manual</button></div></div>
+        <div><div class="group-title">Controller</div><div class="seg" id="controllerSeg"><button data-v="servo">Legacy servo</button><button data-v="safe_servo" class="active">Safe servo</button><button data-v="energy">Energy damping</button><button data-v="lqr">Constrained LQR</button><button data-v="ppo">PPO v3</button><button data-v="motor_position">Motor position</button></div></div>
+        <div><div class="group-title">Motion</div><div class="seg" id="trajectorySeg"><button data-v="hold">Hold</button><button data-v="step" class="active">Step</button><button data-v="sine">Sine</button><button data-v="chirp">Chirp</button><button data-v="aggressive">Aggressive</button><button data-v="aggressive_square">Square stress</button><button data-v="manual">Manual</button></div></div>
         <div><div class="group-title">Plant parameters</div><div class="slider-grid">
           <div class="slider"><label><span>Spring kθ</span><span id="vk">0.42 Nm/rad</span></label><input id="sk" type="range" min="0.15" max="1.2" step="0.005" value="0.42"></div>
           <div class="slider"><label><span>Damping cθ</span><span id="vc">0.006 Nms/rad</span></label><input id="sc" type="range" min="0" max="0.035" step="0.00025" value="0.006"></div>
@@ -462,8 +462,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--params", type=Path, help="JSON file overriding PlantParams")
-    ap.add_argument("--controller", choices=["servo", "lqr", "motor_position", "ppo"], default="servo")
-    ap.add_argument("--ppo-model", type=Path, help="Residual PPO checkpoint (.pt)")
+    ap.add_argument("--controller", choices=["servo", "safe_servo", "energy", "lqr", "lqr_legacy", "motor_position", "ppo"], default="servo")
+    ap.add_argument("--ppo-model", type=Path, help="PPO v3 residual-acceleration checkpoint (.pt)")
     ap.add_argument("--trajectory", choices=["hold", "step", "sine", "chirp", "aggressive", "aggressive_square", "manual"], default="step")
     ap.add_argument("--dt", type=float, default=0.0005)
     return ap.parse_args()
