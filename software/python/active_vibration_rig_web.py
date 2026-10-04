@@ -476,8 +476,8 @@ def main() -> None:
         p = PlantParams.from_dict(json.loads(args.params.read_text()))
     sim = Simulator(p, ControllerParams(), MotionParams(), dt=args.dt)
     if args.ppo_model:
-        from rig_rl_policy_v2 import PPOPolicyAdapterV2
-        sim.controller.set_rl_policy(PPOPolicyAdapterV2(args.ppo_model, sim.p, sim.cp, sim.dt))
+        from rig_rl_policy_v3 import PPOPolicyAdapterV3
+        sim.controller.set_rl_policy(PPOPolicyAdapterV3(args.ppo_model, sim.p, sim.cp, sim.dt))
     if args.controller == "ppo" and sim.controller.rl_policy is None:
         raise SystemExit("--controller ppo requires --ppo-model")
     sim.controller.mode = args.controller
