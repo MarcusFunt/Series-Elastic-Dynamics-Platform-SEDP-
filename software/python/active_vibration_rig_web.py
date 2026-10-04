@@ -38,12 +38,14 @@ import math
 import threading
 import time
 from dataclasses import asdict
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi.responses import HTMLResponse, Response, FileResponse
+from training_web import TrainingJobs
 from plotly.offline import get_plotlyjs
 import uvicorn
 
@@ -63,6 +65,7 @@ class Runtime:
         self.lock = threading.RLock()
         self.playing = True
         self.speed = 1.0
+        self.policy_label = "Startup policy" if sim.controller.rl_policy else "No learned policy loaded"
         self.running = True
         self.last_wall = time.perf_counter()
         self.thread = threading.Thread(target=self._loop, name="rig-sim", daemon=True)
@@ -89,7 +92,8 @@ class Runtime:
             p = s.p
             y = s.y.copy()
             ref = s.trajectory.sample(s.t)
-            u = s.controller.command(y, ref)
+            # Reading the UI must not advance a stateful estimator/policy.
+            u = s._held_command
             sensor = s.plant.sensor_values(y, u, s.rng)
             Fb, delta, delta_dot = s.plant.belt_force(y)
             tau_lim = s.plant.motor_torque_limit(float(y[1]))
@@ -98,6 +102,7 @@ class Runtime:
                 "playing": self.playing,
                 "speed": self.speed,
                 "controller": s.controller.mode,
+                "policy_label": self.policy_label,
                 "trajectory": s.trajectory.mode,
                 "state": {
                     "phi_m": float(y[0]),
@@ -178,7 +183,7 @@ class Runtime:
                     s.controller.mode = v
             elif typ == "trajectory":
                 v = str(msg.get("value", "step"))
-                if v in {"hold", "step", "sine", "chirp", "aggressive", "manual"}:
+                if v in {"hold", "step", "sine", "chirp", "aggressive", "aggressive_square", "manual"}:
                     s.trajectory.mode = v
             elif typ == "manual_target":
                 L = s.p.rail_half_travel * 0.92
@@ -324,7 +329,8 @@ svg text{{font-family:Inter,system-ui,sans-serif}} .rail-shadow{{filter:drop-sha
       <div class="panel-title"><b>Motion laboratory</b><span>all changes apply live</span></div>
       <div class="controls">
         <div><div class="group-title">Simulation</div><div class="row"><button class="btn primary" id="playBtn">Pause</button><button class="btn" id="resetBtn">Reset</button><button class="btn warn" id="kickBtn">Kick resonator</button><a class="btn" href="/api/export.csv" download="rig_log.csv" style="text-decoration:none">Export CSV</a></div></div>
-        <div><div class="group-title">Controller</div><div class="seg" id="controllerSeg"><button data-v="servo">Legacy servo</button><button data-v="safe_servo" class="active">Safe servo</button><button data-v="energy">Energy damping</button><button data-v="lqr">Constrained LQR</button><button data-v="ppo">PPO v3</button><button data-v="motor_position">Motor position</button></div></div>
+        <div><div class="group-title">Controller</div><div class="seg" id="controllerSeg"><button data-v="servo">Legacy servo</button><button data-v="safe_servo" class="active">Safe servo</button><button data-v="energy">Energy damping</button><button data-v="lqr">Constrained LQR</button><button data-v="ppo">Learned residual</button><button data-v="motor_position">Motor position</button></div></div>
+        <div class="training-note" id="loadedPolicyLabel">No learned policy loaded</div>
         <div><div class="group-title">Motion</div><div class="seg" id="trajectorySeg"><button data-v="hold">Hold</button><button data-v="step" class="active">Step</button><button data-v="sine">Sine</button><button data-v="chirp">Chirp</button><button data-v="aggressive">Aggressive</button><button data-v="aggressive_square">Square stress</button><button data-v="manual">Manual</button></div></div>
         <div><div class="group-title">Plant parameters</div><div class="slider-grid">
           <div class="slider"><label><span>Spring kθ</span><span id="vk">0.42 Nm/rad</span></label><input id="sk" type="range" min="0.15" max="1.2" step="0.005" value="0.42"></div>
@@ -373,6 +379,7 @@ function springPath(x1,y1,x2,y2,turns=5,amp=7){{
   return 'M '+pts.map(p=>`${{p[0].toFixed(1)}} ${{p[1].toFixed(1)}}`).join(' L ');
 }}
 function render(s){{
+  $('loadedPolicyLabel').textContent=s.policy_label; $('controllerSeg').querySelector('[data-v=ppo]').disabled=s.policy_label==='No learned policy loaded';
   $('clock').textContent=`t = ${{s.t.toFixed(3)}} s`; $('playBtn').textContent=s.playing?'Pause':'Play'; setSeg('controllerSeg',s.controller); setSeg('trajectorySeg',s.trajectory);
   const st=s.state,d=s.derived,p=s.params; const deg=st.theta*180/Math.PI;
   $('mx').textContent=`${{(st.x*1000).toFixed(2)}} mm`; $('mth').textContent=`${{deg.toFixed(2)}}°`; $('mtau').textContent=`${{st.tau_act.toFixed(3)}} Nm`; $('mf').textContent=`${{d.belt_force.toFixed(2)}} N`;
@@ -405,9 +412,81 @@ window.addEventListener('keydown',e=>{{if(e.target.matches('input,select,button'
 </body></html>'''
 
 
-def create_app(runtime: Runtime) -> FastAPI:
-    app = FastAPI(title="Active vibration rig")
-    html = build_html()
+def create_app(runtime: Runtime, training_root: Optional[Path] = None) -> FastAPI:
+    jobs = TrainingJobs(training_root or Path(__file__).resolve().parents[2]/"runs"/"web_training")
+
+    @asynccontextmanager
+    async def lifespan(app):
+        yield
+        await asyncio.to_thread(jobs.close)
+
+    app = FastAPI(title="Active vibration rig", lifespan=lifespan)
+    app.state.training_jobs = jobs
+    tabs = '<nav class="seg" aria-label="Workspace"><button id="simulationTab" class="active">Simulator</button><button id="trainingTab">Training</button></nav>'
+    html = build_html().replace('<div class="grid">', tabs+'<div class="grid" id="simView">', 1)
+    html = html.replace('<div class="footer">', Path(__file__).with_name('training_ui.html').read_text()+'<div class="footer">', 1)
+
+    @app.middleware("http")
+    async def same_origin(request: Request, call_next):
+        # Local job control must not be launched by a different website.
+        origin = request.headers.get('origin')
+        if request.method == 'POST' and origin and origin != str(request.base_url).rstrip('/'):
+            return Response('Cross-origin job control is disabled', status_code=403)
+        return await call_next(request)
+
+    def job_error(exc):
+        if isinstance(exc, FileNotFoundError): return HTTPException(404, 'Run or artifact not found')
+        if isinstance(exc, RuntimeError): return HTTPException(409, str(exc))
+        return HTTPException(400, str(exc))
+
+    @app.get('/api/training/runs')
+    def training_runs():
+        return jobs.list()
+
+    @app.post('/api/training/runs')
+    def start_training(settings: Dict[str, Any]):
+        try: return jobs.start(settings)
+        except (ValueError, OSError, RuntimeError) as exc: raise job_error(exc)
+
+    @app.get('/api/training/runs/{run_id}')
+    def training_run(run_id: str):
+        try: return jobs.get(run_id)
+        except (ValueError, OSError) as exc: raise job_error(exc)
+
+    @app.post('/api/training/runs/{run_id}/cancel')
+    def cancel_training(run_id: str):
+        try: return jobs.cancel(run_id)
+        except (ValueError, OSError) as exc: raise job_error(exc)
+
+    @app.get('/api/training/runs/{run_id}/artifacts/{filename}')
+    def training_artifact(run_id: str, filename: str):
+        try: return FileResponse(jobs.artifact(run_id, filename), filename=filename)
+        except (ValueError, OSError) as exc: raise job_error(exc)
+
+    @app.post('/api/training/runs/{run_id}/load')
+    def load_training_policy(run_id: str, settings: Dict[str, Any]):
+        try:
+            from evaluate_v4 import load_policy
+            from rig_rl_policy_v4 import EstimatedResidualPolicyV4
+            job = jobs.get(run_id)
+            if job['status'] in ('running', 'cancelling'):
+                raise RuntimeError('Wait until the job stops before loading its checkpoint')
+            filename = settings.get('file', 'policy_candidate.pt')
+            if filename not in ('policy_candidate.pt', 'policy_accepted.pt'):
+                raise ValueError('Select a candidate or accepted checkpoint')
+            model, cfg, _ = load_policy(jobs.artifact(run_id, filename))
+            with runtime.lock:
+                old = runtime.sim
+                sim = Simulator(old.p, old.cp, old.mp, dt=cfg.physics_dt, control_dt=cfg.control_dt)
+                sim.trajectory.mode = old.trajectory.mode
+                sim.trajectory.manual_target = old.trajectory.manual_target
+                sim.controller.set_rl_policy(EstimatedResidualPolicyV4(model,cfg,sim.p,sim.cp,sim.trajectory))
+                sim.controller.mode = 'ppo'
+                runtime.sim = sim
+                runtime.policy_label = ('Accepted v4' if filename=='policy_accepted.pt' else 'Experimental v4 candidate')
+                runtime.last_wall = time.perf_counter()
+            return {'loaded': filename, 'policy_label': runtime.policy_label}
+        except (ValueError, OSError, RuntimeError) as exc: raise job_error(exc)
 
     @app.get("/", response_class=HTMLResponse)
     async def root() -> str:
@@ -461,6 +540,7 @@ def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--training-dir", type=Path, help="Saved browser training runs (default: runs/web_training)")
     ap.add_argument("--params", type=Path, help="JSON file overriding PlantParams")
     ap.add_argument("--controller", choices=["servo", "safe_servo", "energy", "lqr", "lqr_legacy", "motor_position", "ppo"], default="servo")
     ap.add_argument("--ppo-model", type=Path, help="PPO v3 residual-acceleration checkpoint (.pt)")
@@ -493,12 +573,14 @@ def main() -> None:
     sim.controller.mode = args.controller
     sim.trajectory.mode = args.trajectory
     runtime = Runtime(sim)
-    app = create_app(runtime)
+    app = create_app(runtime, args.training_dir)
     print(f"Active vibration rig UI: http://{args.host}:{args.port}")
     try:
         uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     finally:
         runtime.running = False
+        runtime.thread.join(timeout=2)
+        app.state.training_jobs.close()
 
 
 if __name__ == "__main__":
