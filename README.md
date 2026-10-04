@@ -143,7 +143,7 @@ Run the acceptance benchmark:
 
 ```bash
 python benchmark_suite.py --controllers lqr --fail-on-reject
-python evaluate_v3.py --model ../../models/ppo_v3/policy_accepted.pt
+python evaluate_v3.py --model /path/to/policy_accepted.pt
 ```
 
 ## OpenModelica
