@@ -239,11 +239,36 @@ class PlantParams:
 
 @dataclass
 class ControllerParams:
-    # Baseline carriage trajectory servo, expressed as desired carriage force.
-    x_kp: float = 900.0                   # N/m
-    x_kd: float = 45.0                    # N s/m
+    # Legacy force-domain servo. Kept as the deliberately under-damped baseline.
+    x_kp: float = 900.0
+    x_kd: float = 45.0
 
-    # Discrete LQR weights for state [phi, omega_m, x, v, theta, omega, tau_act]
+    # Motion-limited acceleration-domain tracker used by modern controllers.
+    track_kp: float = 95.0
+    track_kd: float = 18.0
+    max_accel: float = 11.0
+    max_speed: float = 0.80
+
+    # Relative-degree-2 rail control-barrier filter.
+    rail_soft_fraction: float = 0.80
+    rail_cbf_omega: float = 15.0
+    rail_cbf_zeta: float = 1.0
+
+    # Energy-shaping diagnostic residual acceleration.
+    energy_theta_gain: float = 2.5
+    energy_omega_gain: float = 1.45
+    energy_residual_limit: float = 6.0
+
+    # Reduced 4-state LQR on [e_x, e_v, theta, theta_dot], control=carriage acceleration.
+    lqr_q_x: float = 80.0
+    lqr_q_v: float = 8.0
+    lqr_q_theta: float = 1500.0
+    lqr_q_theta_dot: float = 60.0
+    lqr_r_accel: float = 2.5
+    lqr_residual_limit: float = 6.0
+    lqr_design_dt: float = 0.01
+
+    # Legacy full-state motor-torque LQR retained only for regression.
     q_phi: float = 0.03
     q_omega_m: float = 0.002
     q_x: float = 1600.0
@@ -253,16 +278,16 @@ class ControllerParams:
     q_tau: float = 0.05
     r_tau_cmd: float = 0.30
 
-
 @dataclass
 class MotionParams:
-    amplitude: float = 0.035              # m
-    step_time: float = 0.50               # s
-    sine_frequency: float = 1.2           # Hz
-    aggressive_period: float = 0.75       # s per reversal
-    chirp_f0: float = 0.4                 # Hz
-    chirp_f1: float = 7.0                 # Hz
-    chirp_duration: float = 8.0            # s
+    amplitude: float = 0.035
+    step_time: float = 0.50
+    sine_frequency: float = 1.2
+    aggressive_period: float = 0.75
+    aggressive_move_fraction: float = 0.72
+    chirp_f0: float = 0.4
+    chirp_f1: float = 7.0
+    chirp_duration: float = 8.0
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +480,25 @@ class Trajectory:
             om = 2.0 * math.pi * m.sine_frequency
             return A*math.sin(om*t), A*om*math.cos(om*t), -A*om*om*math.sin(om*t)
         if self.mode == "aggressive":
-            # Alternating +/-A position commands.  Deliberately discontinuous target.
+            # Repeatable aggressive but feasible point-to-point reversals.
+            # Minimum-jerk quintic prevents the benchmark from being dominated by
+            # impossible discontinuous position commands.
+            P = max(m.aggressive_period, 1e-4)
+            k = int(max(t, 0.0) / P)
+            local = max(t, 0.0) - k*P
+            x0 = 0.0 if k == 0 else (A if ((k-1) % 2 == 0) else -A)
+            x1 = A if (k % 2 == 0) else -A
+            Tm = max(P * clamp(m.aggressive_move_fraction, 0.2, 0.95), 1e-4)
+            if local >= Tm:
+                return x1, 0.0, 0.0
+            z = clamp(local / Tm, 0.0, 1.0)
+            q = 10*z**3 - 15*z**4 + 6*z**5
+            qd = (30*z**2 - 60*z**3 + 30*z**4) / Tm
+            qdd = (60*z - 180*z**2 + 120*z**3) / (Tm*Tm)
+            dx = x1 - x0
+            return x0 + dx*q, dx*qd, dx*qdd
+        if self.mode == "aggressive_square":
+            # Historical discontinuous stress case retained for regression.
             k = int(max(t, 0.0) / max(m.aggressive_period, 1e-4))
             return (A if (k % 2 == 0) else -A), 0.0, 0.0
         if self.mode == "chirp":
@@ -511,20 +554,29 @@ def solve_dare_iterative(A: np.ndarray, B: np.ndarray, Q: np.ndarray, R: np.ndar
 
 
 class Controller:
+    """Controller collection with a shared acceleration-domain safety layer.
+
+    Modern controllers separate trajectory tracking, vibration damping, and
+    safety projection.  This prevents an active controller from reducing angle
+    by simply spending excessive carriage travel.
+    """
+
     def __init__(self, plant: RigPlant, cp: ControllerParams, dt: float):
         self.plant = plant
         self.cp = cp
         self.dt = dt
         self.mode = "servo"
-        self.K: Optional[np.ndarray] = None
+        self.K_legacy: Optional[np.ndarray] = None
+        self.K_reduced: Optional[np.ndarray] = None
         self.rl_policy = None
         self.recompute_lqr()
 
-    def set_rl_policy(self, policy) -> None:
-        """Attach an object exposing command(y, ref) -> motor torque."""
-        self.rl_policy = policy
-
     def recompute_lqr(self) -> None:
+        # Only the reduced constrained controller is designed eagerly.
+        self._recompute_lqr_reduced()
+        self.K_legacy = None
+
+    def _recompute_lqr_legacy(self) -> None:
         A, B = discrete_linearize(self.plant, self.dt)
         cp = self.cp
         Q = np.diag([
@@ -533,63 +585,164 @@ class Controller:
         ])
         R = np.array([[cp.r_tau_cmd]])
         try:
-            if solve_discrete_are is not None:
-                P = solve_discrete_are(A, B, Q, R)
-                self.K = np.linalg.solve(R + B.T @ P @ B, B.T @ P @ A)
-            else:
-                self.K = solve_dare_iterative(A, B, Q, R)
+            from scipy.linalg import solve_discrete_are
+            P = solve_discrete_are(A, B, Q, R)
+            self.K_legacy = np.linalg.solve(R + B.T @ P @ B, B.T @ P @ A)
         except Exception:
             try:
-                self.K = solve_dare_iterative(A, B, Q, R)
+                self.K_legacy = solve_dare_iterative(A, B, Q, R)
             except Exception:
-                self.K = None
+                self.K_legacy = None
+
+    def _recompute_lqr_reduced(self) -> None:
+        p, cp = self.plant.p, self.cp
+        J = max(p.resonator_inertia_pivot, 1e-9)
+        Bcoup = p.resonator_mass * p.lever_com_distance * math.cos(p.theta_neutral_world)
+        k = p.effective_small_angle_stiffness
+        c = p.c_theta
+        Ac = np.array([
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, -k/J, -c/J],
+        ])
+        Bc = np.array([[0.0], [1.0], [0.0], [-Bcoup/J]])
+        dt = max(cp.lqr_design_dt, 1e-4)
+        try:
+            from scipy.signal import cont2discrete
+            from scipy.linalg import solve_discrete_are
+            C = np.eye(4); D = np.zeros((4,1))
+            Ad, Bd, _, _, _ = cont2discrete((Ac, Bc, C, D), dt, method="zoh")
+            Q = np.diag([cp.lqr_q_x, cp.lqr_q_v, cp.lqr_q_theta, cp.lqr_q_theta_dot])
+            R = np.array([[cp.lqr_r_accel]])
+            P = solve_discrete_are(Ad, Bd, Q, R)
+            self.K_reduced = np.linalg.solve(R + Bd.T @ P @ Bd, Bd.T @ P @ Ad)
+        except Exception:
+            Ad = np.eye(4) + Ac*dt
+            Bd = Bc*dt
+            Q = np.diag([cp.lqr_q_x, cp.lqr_q_v, cp.lqr_q_theta, cp.lqr_q_theta_dot])
+            R = np.array([[cp.lqr_r_accel]])
+            try:
+                self.K_reduced = solve_dare_iterative(Ad, Bd, Q, R)
+            except Exception:
+                self.K_reduced = None
 
     def feedforward_torque(self, a_ref: float, v_ref: float) -> float:
         p = self.plant.p
-        # Approximate torque required for motor + translating mass acceleration.
         equiv = p.motor_inertia / max(p.pulley_radius,1e-9) + p.pulley_radius * (p.carriage_mass+p.resonator_mass)
         return equiv * a_ref + p.pulley_radius * p.b_x * v_ref
 
-    def command(self, y: np.ndarray, ref: Tuple[float,float,float]) -> float:
-        p = self.plant.p
+    def tracking_accel(self, y: np.ndarray, ref: Tuple[float,float,float]) -> float:
         cp = self.cp
+        xr, vr, ar = ref
+        a = ar + cp.track_kp*(xr-float(y[2])) + cp.track_kd*(vr-float(y[3]))
+        return clamp(a, -cp.max_accel, cp.max_accel)
+
+    def rail_accel_bounds(self, y: np.ndarray) -> Tuple[float,float]:
+        p, cp = self.plant.p, self.cp
+        x, v = float(y[2]), float(y[3])
+        L = p.rail_half_travel * clamp(cp.rail_soft_fraction, 0.2, 0.99)
+        amax = abs(cp.max_accel)
+        if x >= L:
+            return -amax, -amax
+        if x <= -L:
+            return amax, amax
+        w = max(cp.rail_cbf_omega, 1e-3)
+        z = max(cp.rail_cbf_zeta, 0.0)
+        lo = -w*w*(L + x) - 2.0*z*w*v
+        hi =  w*w*(L - x) - 2.0*z*w*v
+        lo = max(lo, -amax)
+        hi = min(hi, +amax)
+        if lo > hi:
+            a = -amax if (x > 0 or (abs(x) < 1e-9 and v > 0)) else amax
+            return a, a
+        return lo, hi
+
+    def project_accel(self, y: np.ndarray, a_des: float) -> float:
+        lo, hi = self.rail_accel_bounds(y)
+        return clamp(a_des, lo, hi)
+
+    def torque_from_accel(self, y: np.ndarray, a_cmd: float) -> float:
+        p = self.plant.p
+        r = max(p.pulley_radius, 1e-9)
+        reflected_mass = p.motor_inertia/(r*r)
+        M_eff = p.carriage_mass + p.resonator_mass + reflected_mass
+        v, wm = float(y[3]), float(y[1])
+        F = M_eff*a_cmd + p.b_x*v + p.x_coulomb*smooth_sign(v, p.x_friction_eps)
+        tau = r*F + p.motor_viscous*wm + p.motor_coulomb*smooth_sign(wm, p.motor_friction_eps)
+        return float(tau)
+
+    def energy_residual_accel(self, y: np.ndarray) -> float:
+        cp = self.cp
+        a = cp.energy_theta_gain*float(y[4]) + cp.energy_omega_gain*float(y[5])
+        return clamp(a, -cp.energy_residual_limit, cp.energy_residual_limit)
+
+    def lqr_residual_accel(self, y: np.ndarray, ref: Tuple[float,float,float]) -> float:
+        if self.K_reduced is None:
+            return self.energy_residual_accel(y)
+        xr, vr, _ = ref
+        z = np.array([float(y[2])-xr, float(y[3])-vr, float(y[4]), float(y[5])])
+        a = -float((self.K_reduced @ z.reshape(-1,1))[0,0])
+        return clamp(a, -self.cp.lqr_residual_limit, self.cp.lqr_residual_limit)
+
+    def modern_accel(self, y: np.ndarray, ref: Tuple[float,float,float], damping: str = "none") -> float:
+        a = self.tracking_accel(y, ref)
+        if damping == "energy":
+            a += self.energy_residual_accel(y)
+        elif damping == "lqr":
+            a += self.lqr_residual_accel(y, ref)
+        elif damping != "none":
+            raise ValueError(damping)
+        return self.project_accel(y, a)
+
+    def command(self, y: np.ndarray, ref: Tuple[float,float,float]) -> float:
+        p, cp = self.plant.p, self.cp
         xr, vr, ar = ref
 
         if self.mode == "servo":
-            # Baseline trajectory tracking.  No theta feedback by design.
             F = cp.x_kp*(xr-y[2]) + cp.x_kd*(vr-y[3]) + (p.carriage_mass+p.resonator_mass)*ar
             return p.pulley_radius * F
 
+        if self.mode == "safe_servo":
+            return self.torque_from_accel(y, self.modern_accel(y, ref, "none"))
+
+        if self.mode == "energy":
+            return self.torque_from_accel(y, self.modern_accel(y, ref, "energy"))
+
         if self.mode == "lqr":
-            if self.K is None:
+            return self.torque_from_accel(y, self.modern_accel(y, ref, "lqr"))
+
+        if self.mode == "lqr_legacy":
+            if self.K_legacy is None:
+                self._recompute_lqr_legacy()
+            if self.K_legacy is None:
                 return self.command_servo_fallback(y, ref)
-            # Reference state includes motor-side kinematics that correspond to x_ref.
             r = p.pulley_radius
-            yref = np.array([
-                xr/r,
-                vr/r,
-                xr,
-                vr,
-                0.0,
-                0.0,
-                self.feedforward_torque(ar, vr),
-            ])
+            yref = np.array([xr/r, vr/r, xr, vr, 0.0, 0.0, self.feedforward_torque(ar, vr)])
             e = y - yref
-            uff = self.feedforward_torque(ar, vr)
-            return float(uff - (self.K @ e.reshape(-1,1))[0,0])
+            return float(self.feedforward_torque(ar, vr) - (self.K_legacy @ e.reshape(-1,1))[0,0])
 
         if self.mode == "motor_position":
-            # Motor-encoder-centric servo. Useful as a conceptual closed-loop stepper mode.
             phi_ref = xr / p.pulley_radius
             wm_ref = vr / p.pulley_radius
             return 0.22*(phi_ref-y[0]) + 0.004*(wm_ref-y[1]) + self.feedforward_torque(ar,vr)
 
         if self.mode == "ppo":
             if self.rl_policy is None:
-                return self.command_servo_fallback(y, ref)
+                return self.torque_from_accel(y, self.modern_accel(y, ref, "lqr"))
+            if hasattr(self.rl_policy, "residual_accel"):
+                base = self.modern_accel(y, ref, "lqr")
+                residual = float(self.rl_policy.residual_accel(y, ref, base))
+                a = self.project_accel(y, base + residual)
+                return self.torque_from_accel(y, a)
             return float(self.rl_policy.command(y, ref))
 
         raise ValueError(self.mode)
+
+    def set_rl_policy(self, policy) -> None:
+        self.rl_policy = policy
+        if self.rl_policy is not None and hasattr(self.rl_policy, "reset"):
+            self.rl_policy.reset()
 
     def command_servo_fallback(self, y: np.ndarray, ref: Tuple[float,float,float]) -> float:
         old = self.mode
@@ -732,8 +885,8 @@ def run_interactive(sim: Simulator) -> None:
     # Controls
     radio_traj_ax = fig.add_axes([0.69,0.08,0.12,0.26])
     radio_ctrl_ax = fig.add_axes([0.83,0.08,0.13,0.18])
-    radio_traj = RadioButtons(radio_traj_ax, ("hold","step","sine","chirp","aggressive","manual"), active=1)
-    radio_ctrl = RadioButtons(radio_ctrl_ax, ("servo","lqr","motor_position"), active=0)
+    radio_traj = RadioButtons(radio_traj_ax, ("hold","step","sine","chirp","aggressive","aggressive_square","manual"), active=1)
+    radio_ctrl = RadioButtons(radio_ctrl_ax, ("servo","safe_servo","energy","lqr","lqr_legacy","motor_position"), active=0)
     radio_traj_ax.set_title("trajectory",fontsize=10)
     radio_ctrl_ax.set_title("controller",fontsize=10)
 
@@ -914,8 +1067,8 @@ def parse_args() -> argparse.Namespace:
     ap=argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--params",type=Path,help="JSON file overriding PlantParams")
     ap.add_argument("--dump-defaults",type=Path,help="write default parameter JSON and exit")
-    ap.add_argument("--controller",choices=["servo","lqr","motor_position","ppo"],default="servo")
-    ap.add_argument("--trajectory",choices=["hold","step","sine","chirp","aggressive","manual"],default="step")
+    ap.add_argument("--controller",choices=["servo","safe_servo","energy","lqr","lqr_legacy","motor_position","ppo"],default="servo")
+    ap.add_argument("--trajectory",choices=["hold","step","sine","chirp","aggressive","aggressive_square","manual"],default="step")
     ap.add_argument("--dt",type=float,default=0.0005,help="integration timestep [s]")
     ap.add_argument("--headless",type=float,metavar="SECONDS",help="run without GUI for N seconds")
     ap.add_argument("--csv",type=Path,help="CSV output path in headless mode")
