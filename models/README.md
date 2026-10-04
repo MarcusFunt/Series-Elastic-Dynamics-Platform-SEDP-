@@ -1,14 +1,13 @@
 # Trained policy artifacts
 
-This directory is reserved for local/generated policy checkpoints.
+## Current policy
 
-The bootstrap repository intentionally does **not** commit binary `.pt` files. Train them locally using the scripts in `software/python/`, or publish stable checkpoints through Git LFS / GitHub Releases.
+`ppo_v3/policy_accepted.pt` is the current benchmark-gated residual-acceleration policy. It is a small learned correction **on top of constrained LQR**, not an end-to-end torque controller.
 
-Historically useful artifacts from the research pass included:
+Promotion rule: a policy must pass the immutable SEDP-B1 tracking, rail, saturation, stop-contact, peak-angle and RMS-angle gates. Reward alone is never sufficient.
 
-- `ppo_lqr_warmstart.pt` — behavior-cloned LQR warm start;
-- `ppo_longrun_best_nominal.pt` — best nominal-step checkpoint from the earlier long PPO run;
-- a v2 reversal-specialized residual PPO policy;
-- later robust-stage v2 checkpoints retained for comparison rather than assumed superior.
+See `docs/RL_FORMULATION_V3.md` and `docs/benchmark_B1_fixed.json`.
 
-See `docs/RL_FORMULATION_V2.md`, `archive/rl_v1/LONG_RUN_RESULTS.md`, and `docs/ARTIFACTS.md`.
+## Legacy
+
+The `ppo_v2/` and `legacy/` artifacts are historical only. They must not be used for headline comparisons: the original full-state LQR / PPO v2 showcase exposed unacceptable aggressive-reversal behavior and a non-reproducible benchmark claim.
