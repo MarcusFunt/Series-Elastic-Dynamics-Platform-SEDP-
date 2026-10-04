@@ -11,11 +11,14 @@ from benchmark_suite import benchmark,summarize
 
 class InMemoryPolicy:
     def __init__(self,model,cfg,device='cpu'):
-        self.model=model;self.cfg=cfg;self.device=torch.device(device);self.counter=0;self.last_action=0.;self.control_steps=max(1,int(round(cfg.control_dt/.0005)))
-    def reset(self):self.counter=0;self.last_action=0.
+        self.model=model;self.cfg=cfg;self.device=torch.device(device);self.counter=0;self.last_action=0.;self.previous_effective_action=0.;self.control_steps=1
+    def reset(self):self.counter=0;self.last_action=0.;self.previous_effective_action=0.
     def _obs(self,y,ref,base,p):
         c=self.cfg;xr,vr,ar=ref;L=max(p.rail_half_travel,1e-9)
-        return np.clip(np.asarray([(y[2]-xr)/c.pos_scale,(y[3]-vr)/c.vel_scale,y[4]/c.theta_scale,y[5]/c.theta_dot_scale,y[2]/L,y[3]/c.vel_scale,base/c.accel_scale,y[1]/c.motor_speed_scale,y[6]/max(p.motor_hold_torque,1e-6),ar/c.accel_scale,self.last_action,1.-abs(y[2])/L],np.float32),-8,8)
+        return np.clip(np.asarray([(y[2]-xr)/c.pos_scale,(y[3]-vr)/c.vel_scale,y[4]/c.theta_scale,y[5]/c.theta_dot_scale,y[2]/L,y[3]/c.vel_scale,base/c.accel_scale,y[1]/c.motor_speed_scale,y[6]/max(p.motor_hold_torque,1e-6),ar/c.accel_scale,self.previous_effective_action,1.-abs(y[2])/L],np.float32),-8,8)
+    def record_effective_action(self, residual):
+        self.previous_effective_action=float(residual/self.cfg.residual_accel_limit)
+
     @torch.no_grad()
     def residual_accel(self,y,ref,base):
         if self.counter%self.control_steps==0:
@@ -33,7 +36,7 @@ def score_rows(rows):
 def evaluate_model(model,cfg):
     from active_vibration_rig_2d import PlantParams
     pol=BoundPolicy(model,cfg);pol.p=PlantParams()
-    rows=benchmark(['ppo'],ppo_policy=pol)
+    rows=benchmark(['ppo'],ppo_policy=pol,dt=cfg.physics_dt,control_dt=cfg.control_dt)
     return rows,score_rows(rows)
 
 def main():
@@ -54,7 +57,14 @@ def main():
         b=RolloutBufferV2(pc.n_steps,pc.n_envs,12,1,device);ra=th=rail=0.
         for t in range(pc.n_steps):
             with torch.no_grad():a,lp,_,v=model.sample(obs)
-            no,r,d,infos=env.step(a.cpu().numpy());b.obs[t]=obs;b.actions[t]=a;b.logp[t]=lp;b.values[t]=v;b.rewards[t]=torch.tensor(r,device=device);b.dones[t]=torch.tensor(d,device=device);obs=torch.tensor(no,dtype=torch.float32,device=device);steps+=pc.n_envs;ra+=float(np.mean(r));th+=sum(abs(np.degrees(i['theta'])) for i in infos);rail+=sum(i['rail_fraction'] for i in infos)
+            no,r,d,infos=env.step(a.cpu().numpy());b.obs[t]=obs;b.actions[t]=a;b.logp[t]=lp;b.values[t]=v;b.rewards[t]=torch.tensor(r,device=device);b.dones[t]=torch.tensor(d,device=device);
+            for i, info in enumerate(infos):
+                if info.get('truncated', False):
+                    b.truncated[t,i]=1.
+                    with torch.no_grad():
+                        final=torch.tensor(info['final_observation'],dtype=torch.float32,device=device).unsqueeze(0)
+                        b.final_values[t,i]=model.value(final)[0]
+            obs=torch.tensor(no,dtype=torch.float32,device=device);steps+=pc.n_envs;ra+=float(np.mean(r));th+=sum(abs(np.degrees(i['theta'])) for i in infos);rail+=sum(i['rail_fraction'] for i in infos)
         with torch.no_grad():lv=model.value(obs)
         b.compute_gae(lv,pc.gamma,pc.gae_lambda);loss=ppo_update_v2(model,opt,b,pc,anchor)
         if u%4==0:print('step',steps,'reward',ra/pc.n_steps,'theta',th/(pc.n_steps*pc.n_envs),'rail',rail/(pc.n_steps*pc.n_envs),'kl',loss['anchor_kl'])

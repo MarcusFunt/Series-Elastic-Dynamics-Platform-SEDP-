@@ -16,3 +16,17 @@ jobs:
       - run: python -m py_compile software/python/*.py
       - run: python tests/smoke_core.py
       - run: python software/python/benchmark_suite.py --controllers lqr --fail-on-reject
+
+  learned-control-regression:
+    runs-on: ubuntu-latest
+    env:
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-core.txt
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m unittest discover -s tests -p 'test_*.py' -v

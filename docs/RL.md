@@ -26,3 +26,8 @@ Selected policy:
 `models/ppo_v2/ppo_v2_reversal2.pt`
 
 It is selected for aggressive reversals rather than simple step settling. A future universal controller should validate every accepted checkpoint across step, reversal, sine, chirp, and randomized-plant tasks.
+
+The estimated-state/context/history v4 pipeline, constrained MPC reference,
+teacher distillation and corrected timing/timeout semantics are documented in
+[control/RESIDUAL_V4.md](control/RESIDUAL_V4.md). The accepted v3 checkpoint remains
+the default; new candidates require paired promotion checks.

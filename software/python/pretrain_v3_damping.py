@@ -10,7 +10,7 @@ import argparse
 from dataclasses import asdict
 from pathlib import Path
 import numpy as np, torch
-from ppo_agent_v2 import ActorCriticV2,PPOConfigV2,save_checkpoint_v2
+from ppo_agent_v2 import ActorCriticV2,PPOConfigV2,save_checkpoint_v2,reflect_observation
 from rig_rl_env_v3 import RLEnvConfigV3,RigRLEnvV3
 
 def main():
@@ -27,7 +27,7 @@ def main():
  for ep in range(args.epochs):
   perm=torch.randperm(n);losses=[]
   for st in range(0,n,512):
-   ix=perm[st:st+512];pred=m.deterministic(X[ix]);predm=m.deterministic(-X[ix]);loss=((pred-Y[ix])**2).mean()+0.01*((pred+predm)**2).mean();opt.zero_grad();loss.backward();opt.step();losses.append(float(loss))
+   ix=perm[st:st+512];pred=m.deterministic(X[ix]);predm=m.deterministic(reflect_observation(X[ix]));loss=((pred-Y[ix])**2).mean()+0.01*((pred+predm)**2).mean();opt.zero_grad();loss.backward();opt.step();losses.append(float(loss))
   with torch.no_grad():mae=float((m.deterministic(X)-Y).abs().mean())
   print(ep+1,float(np.mean(losses)),mae)
  pc=PPOConfigV2(hidden_size=128);save_checkpoint_v2(args.out,m,pc,asdict(cfg),{'v3':True,'pretrain':'physical damping residual','samples':len(X)});print('saved',args.out)

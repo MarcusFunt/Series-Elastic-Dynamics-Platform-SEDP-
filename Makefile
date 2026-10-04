@@ -24,3 +24,17 @@ ppo:
 train-ppo-v3:
 	cd software/python && python pretrain_v3_damping.py --out ../../models/ppo_v3/heuristic_warmstart.pt
 	cd software/python && python train_ppo_v3.py --init ../../models/ppo_v3/heuristic_warmstart.pt --steps 8192 --outdir ../../models/ppo_v3
+
+.PHONY: test-control-v4 teacher-v4 train-v4 evaluate-v4
+
+test-control-v4:
+	python -m unittest discover -s tests -p 'test_*.py' -v
+
+teacher-v4:
+	python software/python/train_residual_v4.py teacher --outdir runs/v4_teacher
+
+train-v4:
+	python software/python/train_residual_v4.py ppo --init runs/v4_teacher/policy_candidate.pt --outdir runs/v4_ppo
+
+evaluate-v4:
+	python software/python/evaluate_v4.py --mpc --json runs/v4_reference/evaluation.json

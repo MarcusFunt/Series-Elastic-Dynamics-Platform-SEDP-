@@ -63,7 +63,7 @@ class RLEnvConfigV3:
     w_energy_progress: float = 2.5
     w_action: float = 0.030
     w_action_delta: float = 0.060
-    w_adverse_tracking: float = 0.35
+    w_adverse_tracking: float = 0.0
     w_rail: float = 12.0
     alive_bonus: float = 0.25
     reward_gamma: float = 0.995
@@ -75,6 +75,15 @@ class RLEnvConfigV3:
     terminate_rail_fraction: float = 0.82
     terminate_theta: float = math.radians(55.0)
     observation_noise_std: float = 0.0010
+    effective_action_observation: bool = True
+
+    def __post_init__(self):
+        if self.physics_dt <= 0 or self.control_dt <= 0 or self.episode_seconds <= 0:
+            raise ValueError("Timing values must be positive")
+        if not math.isclose(self.control_dt/self.physics_dt, round(self.control_dt/self.physics_dt), abs_tol=1e-9):
+            raise ValueError("control_dt must be an integer multiple of physics_dt")
+        if not math.isclose(self.episode_seconds/self.control_dt, round(self.episode_seconds/self.control_dt), abs_tol=1e-9):
+            raise ValueError("episode_seconds must be an integer multiple of control_dt")
 
     @property
     def substeps(self) -> int:
@@ -114,6 +123,13 @@ class SmoothRandomReference:
     def sample(self,t:float):
         if t-self.t0 >= self.T:
             self._new_segment(t)
+        return self.preview(t)
+
+    def preview(self,t:float):
+        """Preview the announced segment; hold its target beyond the boundary.
+
+        Future random targets are not announced yet and must not be revealed.
+        """
         q=t-self.t0
         if self.instant or q>=self.Tmove:
             return self.x1,0.0,0.0
@@ -139,7 +155,7 @@ class RigRLEnvV3:
         self.plant=RigPlant(self.p)
         self.controller=Controller(self.plant,self.cp,self.cfg.physics_dt)
         self.y=np.zeros(7,dtype=float)
-        self.t=0.0; self.steps=0; self.prev_action=0.0; self.prev_energy=0.0
+        self.t=0.0; self.steps=0; self.prev_action=0.0; self.previous_requested_action=0.0; self.prev_energy=0.0
         self.reference=SmoothRandomReference(self.rng,self.cfg,self.p.rail_half_travel)
         self.kick_at=-1.;self.kick_duration=0.;self.kick_torque=0.
         self.last_u=0.;self.last_base_accel=0.;self.last_residual=0.
@@ -186,7 +202,8 @@ class RigRLEnvV3:
         self.y=np.zeros(7,dtype=float)
         self.y[4]=float(self.rng.normal(0,self.cfg.initial_theta_std))
         self.y[5]=float(self.rng.normal(0,self.cfg.initial_theta_dot_std))
-        self.t=0.;self.steps=0;self.prev_action=0.
+        self.t=0.;self.steps=0;self.prev_action=0.;self.previous_requested_action=0.
+        self.last_u=0.;self.last_base_accel=0.;self.last_residual=0.;self.last_effective_residual=0.
         self.reference=SmoothRandomReference(self.rng,self.cfg,self.p.rail_half_travel)
         if self.rng.random()<self.cfg.kick_probability:
             self.kick_at=float(self.rng.uniform(.2,1.2))
@@ -210,7 +227,7 @@ class RigRLEnvV3:
             self.y[4]/c.theta_scale,self.y[5]/c.theta_dot_scale,
             self.y[2]/L,self.y[3]/c.vel_scale,base/c.accel_scale,
             self.y[1]/c.motor_speed_scale,self.y[6]/max(p.motor_hold_torque,1e-6),
-            ar/c.accel_scale,self.prev_action,1.0-abs(self.y[2])/L
+            ar/c.accel_scale,(self.prev_action if c.effective_action_observation else self.previous_requested_action),1.0-abs(self.y[2])/L
         ],dtype=np.float32)
         vals=np.clip(vals,-8,8)
         if c.observation_noise_std>0:
@@ -248,15 +265,16 @@ class RigRLEnvV3:
         residual=a*self.cfg.residual_accel_limit
         total=self.controller.project_accel(self.y,base+residual)
         u=self.controller.torque_from_accel(self.y,total)
-        self.last_base_accel=base;self.last_residual=residual;self.last_u=u
+        self.last_base_accel=base;self.last_residual=residual;self.last_effective_residual=total-base;self.last_u=u
         for _ in range(self.cfg.substeps):
             ext=self.kick_torque if self.kick_at>=0 and self.kick_at<=self.t<self.kick_at+self.kick_duration else 0.
             self.y=self.plant.rk4(self.y,u,self.cfg.physics_dt,external_torque=ext)
             self.t+=self.cfg.physics_dt
         self.steps+=1
         ref=self.reference.sample(self.t)
-        reward,costs,pred,progress=self._reward(a,ref,base,residual)
-        self.prev_energy=self._energy_norm();self.prev_action=a
+        effective_action=self.last_effective_residual/max(self.cfg.residual_accel_limit,1e-9)
+        reward,costs,pred,progress=self._reward(effective_action,ref,base,self.last_effective_residual)
+        self.prev_energy=self._energy_norm();self.prev_action=effective_action;self.previous_requested_action=a
         rail=abs(self.y[2])/max(self.p.rail_half_travel,1e-9)
         term=bool(rail>self.cfg.terminate_rail_fraction or abs(self.y[4])>self.cfg.terminate_theta or not np.all(np.isfinite(self.y)))
         trunc=self.steps>=self.cfg.max_steps
@@ -264,6 +282,8 @@ class RigRLEnvV3:
         obs=self._observation(ref)
         info=self._info(ref,reward,costs)
         info['energy_progress_reward']=progress
+        info['requested_action']=a
+        info['effective_residual_accel']=self.last_effective_residual
         return obs,reward,term,trunc,info
 
     def config_dict(self):return asdict(self.cfg)
@@ -280,8 +300,9 @@ class VectorRigEnvV3:
         O=[];R=[];D=[];I=[]
         for i,e in enumerate(self.envs):
             o,r,te,tr,info=e.step(actions[i]);d=te or tr
+            info=dict(info); info['terminated']=te; info['truncated']=tr and not te
             if d:
-                info=dict(info);info['episode_done']=1.;o,_=e.reset()
+                info['final_observation']=o.copy();info['episode_done']=1.;o,_=e.reset()
             O.append(o);R.append(r);D.append(d);I.append(info)
         return np.stack(O),np.asarray(R,np.float32),np.asarray(D,np.float32),I
 
