@@ -1,0 +1,15 @@
+{
+  "benchmark_version": "SEDP-B1",
+  "summary": {"lqr": true, "ppo": true},
+  "rows": [
+    {"controller":"safe_servo","scenario":"step","peak_angle_deg":3.0518336116,"angle_rms_deg":0.6231207584,"position_rmse_mm":5.5115668917,"peak_rail_fraction":0.5390929070,"saturation_fraction":0.0,"stop_contact_fraction":0.0,"accepted":true},
+    {"controller":"lqr","scenario":"step","peak_angle_deg":1.7995712439,"angle_rms_deg":0.4011090241,"position_rmse_mm":6.2565757321,"peak_rail_fraction":0.5727667050,"saturation_fraction":0.0,"stop_contact_fraction":0.0,"accepted":true},
+    {"controller":"ppo","scenario":"step","peak_angle_deg":1.7600851078,"angle_rms_deg":0.4189860459,"position_rmse_mm":6.3293265466,"peak_rail_fraction":0.5907136519,"saturation_fraction":0.0,"stop_contact_fraction":0.0,"accepted":true},
+    {"controller":"safe_servo","scenario":"aggressive","peak_angle_deg":5.0818104316,"angle_rms_deg":2.8697615822,"position_rmse_mm":0.1716113657,"peak_rail_fraction":0.5438820687,"saturation_fraction":0.0,"stop_contact_fraction":0.0,"accepted":true},
+    {"controller":"lqr","scenario":"aggressive","peak_angle_deg":3.9450922630,"angle_rms_deg":1.8425606298,"position_rmse_mm":5.3033689002,"peak_rail_fraction":0.7183302996,"saturation_fraction":0.0,"stop_contact_fraction":0.0,"accepted":true},
+    {"controller":"ppo","scenario":"aggressive","peak_angle_deg":3.8196164071,"angle_rms_deg":1.7971024336,"position_rmse_mm":5.5298574503,"peak_rail_fraction":0.7285508297,"saturation_fraction":0.0,"stop_contact_fraction":0.0,"accepted":true},
+    {"controller":"safe_servo","scenario":"square_stress","peak_angle_deg":6.3920928525,"angle_rms_deg":3.2865449892,"position_rmse_mm":27.0148046511,"peak_rail_fraction":0.5385558062,"saturation_fraction":0.0,"stop_contact_fraction":0.0,"accepted":true},
+    {"controller":"lqr","scenario":"square_stress","peak_angle_deg":3.4488408075,"angle_rms_deg":1.7625219540,"position_rmse_mm":29.2046473697,"peak_rail_fraction":0.6140131720,"saturation_fraction":0.0,"stop_contact_fraction":0.0,"accepted":true},
+    {"controller":"ppo","scenario":"square_stress","peak_angle_deg":3.3448042362,"angle_rms_deg":1.6706556133,"position_rmse_mm":28.9614807497,"peak_rail_fraction":0.6346441279,"saturation_fraction":0.0,"stop_contact_fraction":0.0,"accepted":true}
+  ]
+}
