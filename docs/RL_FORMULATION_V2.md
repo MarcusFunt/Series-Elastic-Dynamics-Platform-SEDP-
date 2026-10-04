@@ -1,3 +1,5 @@
+> **Superseded:** v2 is retained only for history. Its old headline benchmark is not considered valid project evidence because it was not reproducible against the committed simulator/checkpoint and it allowed undesirable tracking/rail trade-offs. Use [RL_FORMULATION_V3.md](RL_FORMULATION_V3.md).
+
 # RL formulation v2 — active vibration rig
 
 ## Why v1 drifted
