@@ -15,3 +15,4 @@ jobs:
       - run: pip install -r requirements-core.txt
       - run: python -m py_compile software/python/*.py
       - run: python tests/smoke_core.py
+      - run: python software/python/benchmark_suite.py --controllers lqr --fail-on-reject
