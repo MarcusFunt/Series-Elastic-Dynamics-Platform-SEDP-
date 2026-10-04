@@ -67,8 +67,8 @@ def run_controller(controller: str, scenario: Scenario, *, ppo_policy=None,
                    plant: Optional[PlantParams] = None,
                    cp: Optional[ControllerParams] = None,
                    mp: Optional[MotionParams] = None,
-                   dt: float = 0.0005) -> Simulator:
-    sim = Simulator(plant or PlantParams(), cp or ControllerParams(), mp or MotionParams(), dt=dt)
+                   dt: float = 0.0005, control_dt: Optional[float] = None) -> Simulator:
+    sim = Simulator(plant or PlantParams(), cp or ControllerParams(), mp or MotionParams(), dt=dt, control_dt=control_dt)
     sim.controller.mode = controller
     if controller == "ppo":
         if ppo_policy is None:
@@ -145,11 +145,11 @@ def apply_gates(candidate: Metrics, reference: Metrics, scenario: Scenario) -> M
     return candidate
 
 
-def benchmark(controllers: Iterable[str], *, ppo_policy=None, dt: float = 0.0005) -> list[Metrics]:
+def benchmark(controllers: Iterable[str], *, ppo_policy=None, dt: float = 0.0005, control_dt: Optional[float] = None) -> list[Metrics]:
     controllers = list(controllers)
     rows: list[Metrics] = []
     for sc in SCENARIOS:
-        ref_sim = run_controller("safe_servo", sc, dt=dt)
+        ref_sim = run_controller("safe_servo", sc, dt=dt, control_dt=control_dt)
         ref = measure(ref_sim, sc, "safe_servo")
         ref.passed_hard_constraints = True
         ref.passed_vibration_gate = True
@@ -158,7 +158,7 @@ def benchmark(controllers: Iterable[str], *, ppo_policy=None, dt: float = 0.0005
         for ctrl in controllers:
             if ctrl == "safe_servo":
                 continue
-            sim = run_controller(ctrl, sc, ppo_policy=ppo_policy, dt=dt)
+            sim = run_controller(ctrl, sc, ppo_policy=ppo_policy, dt=dt, control_dt=control_dt)
             m = measure(sim, sc, ctrl)
             rows.append(apply_gates(m, ref, sc))
     return rows

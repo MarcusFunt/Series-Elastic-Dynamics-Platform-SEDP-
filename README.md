@@ -193,3 +193,13 @@ Core 1: trajectory generation, LQR/MPC/RL, system ID, haptics, USB/logging
 ## Next physical milestone
 
 Build the instrumented rig, identify the plant, recalibrate the twins, then rerun the exact same SEDP-B1 acceptance gates against hardware-observable state.
+
+### Estimated-state residual control v4
+
+The new experimental pipeline fixes PPO timing, reflection and timeout handling,
+adds an encoder/gyro EKF with motion context and eight-frame history, and uses a
+constrained MPC reference to collect teacher demonstrations. See
+[the v4 workflow](docs/control/RESIDUAL_V4.md) and
+[validation results](docs/control/V4_VALIDATION.md). It does not replace the
+accepted v3 policy: initial candidates improve some vibration metrics but fail
+paired tracking/peak-angle promotion checks.

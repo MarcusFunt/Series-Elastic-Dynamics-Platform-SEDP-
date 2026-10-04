@@ -464,6 +464,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--params", type=Path, help="JSON file overriding PlantParams")
     ap.add_argument("--controller", choices=["servo", "safe_servo", "energy", "lqr", "lqr_legacy", "motor_position", "ppo"], default="servo")
     ap.add_argument("--ppo-model", type=Path, help="PPO v3 residual-acceleration checkpoint (.pt)")
+    ap.add_argument("--ppo-v4-model", type=Path, help="Estimated-state v4 checkpoint; uses checkpoint timing")
     ap.add_argument("--trajectory", choices=["hold", "step", "sine", "chirp", "aggressive", "aggressive_square", "manual"], default="step")
     ap.add_argument("--dt", type=float, default=0.0005)
     return ap.parse_args()
@@ -474,12 +475,21 @@ def main() -> None:
     p = PlantParams()
     if args.params:
         p = PlantParams.from_dict(json.loads(args.params.read_text()))
-    sim = Simulator(p, ControllerParams(), MotionParams(), dt=args.dt)
+    if args.ppo_model and args.ppo_v4_model:
+        raise SystemExit("Choose either --ppo-model or --ppo-v4-model")
+    if args.ppo_v4_model:
+        from evaluate_v4 import load_policy
+        from rig_rl_policy_v4 import EstimatedResidualPolicyV4
+        model, cfg, _ = load_policy(args.ppo_v4_model)
+        sim = Simulator(p, ControllerParams(), MotionParams(), dt=cfg.physics_dt, control_dt=cfg.control_dt)
+        sim.controller.set_rl_policy(EstimatedResidualPolicyV4(model,cfg,p,sim.cp,sim.trajectory))
+    else:
+        sim = Simulator(p, ControllerParams(), MotionParams(), dt=args.dt)
     if args.ppo_model:
         from rig_rl_policy_v3 import PPOPolicyAdapterV3
         sim.controller.set_rl_policy(PPOPolicyAdapterV3(args.ppo_model, sim.p, sim.cp, sim.dt))
     if args.controller == "ppo" and sim.controller.rl_policy is None:
-        raise SystemExit("--controller ppo requires --ppo-model")
+        raise SystemExit("--controller ppo requires --ppo-model or --ppo-v4-model")
     sim.controller.mode = args.controller
     sim.trajectory.mode = args.trajectory
     runtime = Runtime(sim)

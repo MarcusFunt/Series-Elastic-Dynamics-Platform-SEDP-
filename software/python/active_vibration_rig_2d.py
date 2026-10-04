@@ -734,6 +734,8 @@ class Controller:
                 base = self.modern_accel(y, ref, "lqr")
                 residual = float(self.rl_policy.residual_accel(y, ref, base))
                 a = self.project_accel(y, base + residual)
+                if hasattr(self.rl_policy, "record_effective_action"):
+                    self.rl_policy.record_effective_action(a-base)
                 return self.torque_from_accel(y, a)
             return float(self.rl_policy.command(y, ref))
 
@@ -757,11 +759,19 @@ class Controller:
 # ---------------------------------------------------------------------------
 
 class Simulator:
-    def __init__(self, p: PlantParams, cp: ControllerParams, mp: MotionParams, dt: float = 0.0005):
+    def __init__(self, p: PlantParams, cp: ControllerParams, mp: MotionParams, dt: float = 0.0005, control_dt: Optional[float] = None):
         self.p = p
         self.cp = cp
         self.mp = mp
         self.dt = dt
+        self.control_dt = control_dt if control_dt is not None else dt
+        if dt <= 0: raise ValueError("dt must be positive")
+        ratio = self.control_dt/dt
+        if ratio < 1 or not math.isclose(ratio, round(ratio), abs_tol=1e-9):
+            raise ValueError("control_dt must be a positive integer multiple of dt")
+        self.control_steps = int(round(ratio))
+        self._physics_steps = 0
+        self._held_command = 0.0
         self.plant = RigPlant(p)
         self.controller = Controller(self.plant, cp, dt)
         self.trajectory = Trajectory("step", mp)
@@ -780,6 +790,10 @@ class Simulator:
         self.t = 0.0
         self.external_torque = 0.0
         self.kick_until = -1.0
+        self._physics_steps = 0
+        self._held_command = 0.0
+        if self.controller.rl_policy is not None:
+            self.controller.rl_policy.reset()
         self.history.clear()
         self._next_log_t = 0.0
 
@@ -790,7 +804,10 @@ class Simulator:
     def step(self, n: int = 1) -> None:
         for _ in range(n):
             ref = self.trajectory.sample(self.t)
-            u = self.controller.command(self.y, ref)
+            if self._physics_steps % self.control_steps == 0:
+                self._held_command = self.controller.command(self.y, ref)
+            u = self._held_command
+            self._physics_steps += 1
             ext_tau = self.kick_torque if self.t < self.kick_until else 0.0
             self.y = self.plant.rk4(self.y, u, self.dt, external_torque=ext_tau)
             self.t += self.dt
