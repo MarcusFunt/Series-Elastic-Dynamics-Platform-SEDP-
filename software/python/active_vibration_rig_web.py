@@ -464,7 +464,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--params", type=Path, help="JSON file overriding PlantParams")
     ap.add_argument("--controller", choices=["servo", "lqr", "motor_position", "ppo"], default="servo")
     ap.add_argument("--ppo-model", type=Path, help="Residual PPO checkpoint (.pt)")
-    ap.add_argument("--trajectory", choices=["hold", "step", "sine", "chirp", "aggressive", "manual"], default="step")
+    ap.add_argument("--trajectory", choices=["hold", "step", "sine", "chirp", "aggressive", "aggressive_square", "manual"], default="step")
     ap.add_argument("--dt", type=float, default=0.0005)
     return ap.parse_args()
 
