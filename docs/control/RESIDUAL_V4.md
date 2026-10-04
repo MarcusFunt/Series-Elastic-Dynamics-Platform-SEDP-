@@ -119,3 +119,35 @@ See `V4_VALIDATION.md` and its JSON evidence for actual results. The next work
 should improve the teacher's local prediction/feasibility and task balance,
 then expand training/evaluation seeds. These experiments do not establish that
 history or MPC alone improves overall control.
+
+## Browser training workspace
+
+Run `make browser`, open http://127.0.0.1:8765 and select **Training**.
+The workspace starts the same v4 scripts in a separate Python process. One job
+runs at a time; the simulator remains available. PPO settings include step
+budget, environment count, rollout length, learning rate, anchor KL, seed,
+history and the optional carriage encoder. Choose a previous candidate or
+accepted checkpoint to initialize PPO; its stored history/sensor configuration
+overrides those two form settings.
+
+The workflows are PPO, MPC teacher plus distillation, checkpoint evaluation,
+and MPC performance reference. Paired evaluation after training defaults on.
+Turning it off produces an unevaluated candidate, never an accepted checkpoint.
+A completed run shows metrics, evaluation gates, paired result rows, logs and
+downloadable artifacts. **Test candidate in simulator** explicitly loads an
+experimental candidate and resets the simulation with its checkpoint timing;
+**Test accepted policy** loads the separately accepted artifact when present.
+
+Jobs, configurations, logs, datasets, checkpoints and evaluations are saved in
+`runs/web_training/<run-id>/`. Use `--training-dir PATH` to choose another
+location. Closing a browser tab leaves training running. Cancelling a job or
+stopping the server terminates its process; an uncleanly stopped run is marked
+interrupted on the next server startup. Partial checkpoints remain downloadable.
+The GUI currently lists runs created through this workspace; pre-existing CLI
+runs and v3 checkpoints remain available through the CLI. PPO counts are rounded
+up to a complete rollout, as in the existing trainer. Training runs on the
+server's CPU using the existing NumPy dynamics, even if a GPU is installed.
+
+For web/job integration tests, install `requirements-test.txt`, then run
+`make test-control-v4`. Keep the default loopback host for local use; the GUI
+is a local experiment tool without user authentication.

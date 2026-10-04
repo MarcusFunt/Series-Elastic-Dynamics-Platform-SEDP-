@@ -38,9 +38,11 @@ def collect_teacher(cfg,samples,episodes,seed,horizon):
             X.append(obs.copy());Y.append([action]);groups.append(episode)
             valid.append(teacher.diagnostics['success']);diagnostics.append(dict(teacher.diagnostics))
             obs,_,te,tr,_=env.step([action])
+            if len(X)%50==0:
+                print('EVENT '+json.dumps({'phase':'teacher','episode':episode+1,'samples':len(X),'successful':sum(valid)}),flush=True)
             if te or tr or len(X)>=samples:break
+        print('EVENT '+json.dumps({'phase':'teacher','episode':episode+1,'samples':len(X),'successful':sum(valid)}),flush=True)
         if len(X)>=samples:break
-        print('teacher episode',episode,'samples',len(X),'successful',sum(valid),flush=True)
     return np.asarray(X,np.float32),np.asarray(Y,np.float32),np.asarray(groups),np.asarray(valid),diagnostics
 
 
@@ -65,7 +67,7 @@ def distill(X,Y,groups,valid,cfg,epochs,seed):
         if va<best_validation:
             best_validation=va;best_state={k:v.detach().clone() for k,v in model.state_dict().items()}
         losses.append({'epoch':epoch+1,'train_action_mae':tr,'heldout_action_mae':va})
-        print('distill',losses[-1],flush=True)
+        print('EVENT '+json.dumps({'phase':'distill',**losses[-1]}),flush=True)
     model.load_state_dict(best_state)
     return model,{'best_heldout_action_mae':best_validation,'losses':losses,'train_samples':int(train.sum()),'validation_samples':int(validation.sum()),
                   'heldout_episodes':heldout.tolist(),'excluded_fallback_labels':int((~valid).sum())}
@@ -145,6 +147,7 @@ def main():
     path=out/'policy_candidate.pt'
     save_checkpoint_v2(path,model,pc,asdict(cfg),metadata(steps,args.mode,wall_seconds=time.time()-started))
     if not args.skip_evaluation:
+        print('EVENT '+json.dumps({'phase':'evaluation'}),flush=True)
         rows=evaluate(model,cfg,args.eval_seeds)
         decision=promotion(rows)
         result={'benchmark_version':'SEDP-V4-100HZ','config':asdict(cfg),'rows':rows,'promotion':decision}

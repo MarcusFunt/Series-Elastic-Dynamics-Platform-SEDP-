@@ -1,5 +1,6 @@
 """Paired deterministic and randomized evaluation through the training loop."""
 import argparse
+import json
 from dataclasses import asdict, replace
 import json
 from pathlib import Path
@@ -64,6 +65,7 @@ def evaluate(model=None,cfg=None,seeds=(101,202,303),include_mpc=False,horizon=4
     cases=[(sc,0,False) for sc in SCENARIOS]+[(None,int(seed),True) for seed in seeds]
     for scenario,seed,randomized in cases:
         for ctrl in ['lqr']+(['mpc'] if include_mpc else [])+(['policy'] if model is not None else []):
+            print('EVENT '+json.dumps({'phase':'evaluation','controller':ctrl,'case':scenario.name if scenario else 'random_reference','seed':seed,'completed_cases':len(rows),'total_cases':len(cases)*(1+int(include_mpc)+int(model is not None))}),flush=True)
             rows.append(run_case(ctrl,scenario,seed=seed,cfg=cfg,model=model,horizon=horizon,randomized=randomized))
     return rows
 

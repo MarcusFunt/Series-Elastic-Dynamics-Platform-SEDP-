@@ -1,0 +1,88 @@
+<style>
+#trainingView[hidden],#simView[hidden],[data-mode][hidden]{display:none} .training-grid{display:grid;grid-template-columns:330px minmax(0,1fr);gap:14px;margin-top:14px}
+.training-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}.training-fields label{display:grid;gap:4px;color:var(--muted);font-size:12px}.training-fields input,.training-fields select,#checkpointSelect,#runSelect{width:100%;padding:7px;background:#0d131a;border:1px solid var(--line);border-radius:6px;color:var(--text)}
+#trainingLog{max-height:250px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#0d131a;padding:12px;font-size:12px} #trainingError{color:var(--red)} #trainingProgress{width:100%;accent-color:var(--cyan)} .results-scroll{overflow:auto}.results-scroll table{border-collapse:collapse;width:100%;font-size:12px}.results-scroll th,.results-scroll td{padding:8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}.training-note{color:var(--muted);font-size:12px}.training-artifacts{display:flex;flex-wrap:wrap;gap:8px}.training-artifacts a{color:var(--blue)} button:disabled{opacity:.45;cursor:default}@media(max-width:850px){.training-grid{grid-template-columns:1fr}}
+</style>
+<section id="trainingView" hidden aria-label="Machine learning training">
+<div class="training-grid">
+<div class="panel"><div class="panel-title"><b>Residual learning v4</b><span>Estimated state + context + history</span></div>
+<form id="trainingForm" class="controls">
+<label>Workflow<select id="trainingMode"><option value="ppo">PPO training</option><option value="teacher">MPC teacher + distillation</option><option value="evaluate">Evaluate checkpoint</option><option value="mpc">MPC performance reference</option></select></label>
+<label>Starting checkpoint<select id="checkpointSelect"><option value="">New policy</option></select></label>
+<div class="training-fields">
+<label data-mode="ppo">Environment steps<input name="steps" type="number" min="1" max="100000000" value="65536" required></label>
+<label data-mode="ppo">Environment count<input name="envs" type="number" min="1" max="64" value="8" required></label>
+<label data-mode="ppo">Rollout length<input name="rollout" type="number" min="2" max="4096" value="256" required></label>
+<label data-mode="ppo">Learning rate<input name="learning_rate" type="number" min="0.00000001" max="0.01" step="any" value="0.00003" required></label>
+<label data-mode="ppo">Anchor KL weight<input name="anchor_kl" type="number" min="0" max="1" step="any" value="0.005" required></label>
+<label data-mode="ppo teacher">Random seed<input name="seed" type="number" min="0" max="2147483647" value="173" required></label>
+<label data-mode="ppo teacher">History frames<input name="history" type="number" min="1" max="32" value="8" required></label>
+<label data-mode="teacher">Teacher samples<input name="samples" type="number" min="16" max="1000000" value="2400" required></label>
+<label data-mode="teacher">Teacher episodes<input name="episodes" type="number" min="2" max="10000" value="8" required></label>
+<label data-mode="teacher">Distillation epochs<input name="epochs" type="number" min="1" max="10000" value="30" required></label>
+<label data-mode="teacher mpc">MPC horizon<input name="horizon" type="number" min="2" max="100" value="40" required></label>
+</div>
+<label data-mode="ppo teacher"><input id="linearEncoder" type="checkbox"> Include linear carriage encoder</label>
+<label data-mode="ppo teacher"><input id="evaluateAfter" type="checkbox" checked> Run paired evaluation after training</label>
+<p class="training-note">PPO learns a residual over the constrained LQR baseline. Training uses randomized plants and noisy measurements. Evaluation pairs the candidate with estimated-state LQR. An initial checkpoint supplies its own history and sensor configuration.</p>
+<p class="training-note" id="teacherNote" hidden>MPC collection and reference evaluation can take a long time. Solver fallbacks are excluded from teacher fitting.</p>
+<div class="row"><button class="btn primary" id="startTraining" type="submit">Start job</button><button class="btn warn" id="cancelTraining" type="button" disabled>Cancel job</button></div>
+<div id="trainingError" role="alert"></div>
+</form></div>
+<div class="panel"><div class="panel-title"><b>Experiments</b><span id="trainingStatus" aria-live="polite">No run selected</span></div><div class="controls">
+<label>Saved runs<select id="runSelect"><option value="">No runs yet</option></select></label>
+<div id="trainingSummary" class="training-note"></div><progress id="trainingProgress" max="100" value="0"></progress>
+<div id="trainingChart" class="chart" style="height:260px"></div>
+<div class="row"><button id="loadCheckpoint" class="btn" disabled>Test candidate in simulator</button><button id="loadAccepted" class="btn" disabled>Test accepted policy</button></div>
+<div id="policyLoadStatus" class="training-note" aria-live="polite"></div>
+<div id="trainingDecision"></div><div id="trainingResults" class="results-scroll"></div><div id="trainingArtifacts" class="training-artifacts"></div>
+<details open><summary>Live log (last 64 KB)</summary><pre id="trainingLog">Start a job to view progress.</pre></details>
+<p class="training-note">Runs are saved on the machine serving this interface. Closing this tab keeps a job running; stopping the server cancels it. Candidates are experimental until evaluation accepts them.</p>
+</div></div>
+</div></section>
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+ const el=id=>document.getElementById(id); let runs=[],selected='',current=null,polling=false;
+ const showTab=name=>{el('simView').hidden=name!=='sim';el('trainingView').hidden=name!=='training';el('simulationTab').classList.toggle('active',name==='sim');el('trainingTab').classList.toggle('active',name==='training');window.dispatchEvent(new Event('resize'));};
+ el('simulationTab').onclick=()=>showTab('sim');el('trainingTab').onclick=()=>showTab('training');
+ async function api(path,body){const r=await fetch('/api/training'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const value=await r.json();if(!r.ok)throw new Error(value.detail||'Request failed');return value;}
+ function modeChanged(){const mode=el('trainingMode').value;document.querySelectorAll('[data-mode]').forEach(x=>x.hidden=!x.dataset.mode.split(' ').includes(mode));el('teacherNote').hidden=!['teacher','mpc'].includes(mode);el('checkpointSelect').disabled=['teacher','mpc'].includes(mode);}
+ el('trainingMode').onchange=modeChanged;modeChanged();
+ function option(select,value,text){const o=document.createElement('option');o.value=value;o.textContent=text;select.appendChild(o);}
+ async function refresh(){
+  runs=await api('/runs');const old=el('runSelect').value;el('runSelect').replaceChildren();
+  if(!runs.length)option(el('runSelect'),'','No runs yet');
+  runs.forEach(r=>option(el('runSelect'),r.id,new Date(r.started*1000).toLocaleString()+' · '+r.settings.mode+' · '+r.status));
+  if(!selected)selected=old||runs[0]?.id||'';el('runSelect').value=selected;
+  const previous=el('checkpointSelect').value;el('checkpointSelect').replaceChildren();option(el('checkpointSelect'),'','New policy');
+  // Fetch only saved checkpoint inventories; do not offer partial active files.
+  for(const r of runs.filter(r=>!['running','cancelling'].includes(r.status))){for(const f of r.artifacts.filter(f=>f.endsWith('.pt')&&['policy_candidate.pt','policy_accepted.pt'].includes(f)))option(el('checkpointSelect'),JSON.stringify({run:r.id,file:f}),new Date(r.started*1000).toLocaleString()+' · '+f);}
+  el('checkpointSelect').value=previous;
+ }
+ const number=v=>typeof v==='number'&&Number.isFinite(v)?v.toFixed(3):'—';
+ function render(d){
+  current=d;el('trainingStatus').textContent=d.settings.mode+' · '+d.status;
+  const active=runs.find(r=>['running','cancelling'].includes(r.status));el('startTraining').disabled=Boolean(active);el('cancelTraining').disabled=!active||active.status==='cancelling';
+  const metrics=d.metrics||[],last=metrics.at(-1),phase=last?.phase||'Starting';
+  let progress=0;if(last?.phase==='ppo')progress=100*last.steps/d.settings.steps;else if(last?.phase==='teacher')progress=100*last.samples/d.settings.samples;else if(last?.phase==='distill')progress=100*last.epoch/d.settings.epochs;else if(last?.phase==='evaluation'&&last.total_cases)progress=100*last.completed_cases/last.total_cases;
+  el('trainingProgress').value=Math.min(100,progress);if(['running','cancelling'].includes(d.status)&&last?.phase==='evaluation'&&!last.total_cases)el('trainingProgress').removeAttribute('value');
+  el('trainingSummary').textContent=phase+' · '+Math.round(((d.finished||Date.now()/1000)-d.started))+' s elapsed'+(last?.steps?' · '+last.steps.toLocaleString()+' steps':'');
+  el('trainingLog').textContent=d.logs;el('trainingLog').scrollTop=el('trainingLog').scrollHeight;
+  const ppo=metrics.filter(m=>m.phase==='ppo'),fit=metrics.filter(m=>m.phase==='distill');const traces=ppo.length?[{x:ppo.map(m=>m.steps),y:ppo.map(m=>m.mean_reward),name:'Mean reward',mode:'lines+markers'}]:fit.length?[{x:fit.map(m=>m.epoch),y:fit.map(m=>m.train_action_mae),name:'Train action MAE'},{x:fit.map(m=>m.epoch),y:fit.map(m=>m.heldout_action_mae),name:'Held-out action MAE'}]:[];
+  Plotly.react('trainingChart',traces,{paper_bgcolor:'#0d131a',plot_bgcolor:'#0d131a',font:{color:'#b9c7d4'},margin:{l:55,r:15,t:25,b:45},xaxis:{title:ppo.length?'Environment steps':'Epoch'},yaxis:{title:ppo.length?'Mean reward':'Action MAE'},legend:{orientation:'h'}},{responsive:true,displayModeBar:false});
+  el('loadCheckpoint').disabled=['running','cancelling'].includes(d.status)||!d.artifacts.includes('policy_candidate.pt');el('loadAccepted').disabled=['running','cancelling'].includes(d.status)||!d.artifacts.includes('policy_accepted.pt');
+  el('trainingArtifacts').replaceChildren();for(const f of d.artifacts){const a=document.createElement('a');a.textContent=f;a.href='/api/training/runs/'+d.id+'/artifacts/'+encodeURIComponent(f);a.download=f;el('trainingArtifacts').appendChild(a);}
+  el('trainingDecision').replaceChildren();const decision=d.evaluation?.promotion;
+  const title=document.createElement('b');title.textContent=decision?(decision.accepted?'Accepted by paired evaluation':'Rejected by paired evaluation'):(d.evaluation?'MPC reference results':'Not evaluated');title.style.color=decision?(decision.accepted?'var(--green)':'var(--orange)'):'var(--muted)';el('trainingDecision').appendChild(title);
+  if(decision){const p=document.createElement('p');p.textContent='Mean energy ratio: '+number(decision.mean_energy_ratio);el('trainingDecision').appendChild(p);const ul=document.createElement('ul');for(const reason of decision.reasons){const li=document.createElement('li');li.textContent=reason;ul.appendChild(li);}el('trainingDecision').appendChild(ul);}
+  el('trainingResults').replaceChildren();if(d.evaluation?.rows){const table=document.createElement('table'),head=table.createTHead().insertRow();['Controller / case','Seed','Peak θ (°)','Tracking RMSE (mm)','Energy (mJ·s)','Rail fraction','Saturation','MPC fallback','Solve p95 (ms)'].forEach(t=>{const th=document.createElement('th');th.textContent=t;head.appendChild(th);});const body=table.createTBody();for(const r of d.evaluation.rows){const row=body.insertRow();[r.controller+' / '+r.scenario,r.seed,number(r.peak_angle_deg),number(r.position_rmse_mm),number(r.energy_integral_mJs),number(r.peak_rail_fraction),number(r.saturation_fraction),number(r.mpc_fallback_fraction),number(r.solve_p95_ms)].forEach(v=>row.insertCell().textContent=v);}el('trainingResults').appendChild(table);}
+ }
+ async function poll(){if(polling)return;polling=true;try{await refresh();if(selected)render(await api('/runs/'+selected));el('trainingError').textContent='';}catch(e){el('trainingError').textContent=e.message;}finally{polling=false;}}
+ el('runSelect').onchange=()=>{selected=el('runSelect').value;poll();};
+ el('trainingForm').onsubmit=async e=>{e.preventDefault();const cfg={mode:el('trainingMode').value,evaluate:el('evaluateAfter').checked,linear_encoder:el('linearEncoder').checked};for(const input of el('trainingForm').querySelectorAll('input[name]'))cfg[input.name]=Number(input.value);if(el('checkpointSelect').value&&!el('checkpointSelect').disabled)cfg.init=JSON.parse(el('checkpointSelect').value);el('startTraining').disabled=true;try{const d=await api('/runs',cfg);selected=d.id;await poll();}catch(err){el('trainingError').textContent=err.message;el('startTraining').disabled=false;}};
+ el('cancelTraining').onclick=async()=>{try{const active=runs.find(r=>['running','cancelling'].includes(r.status));if(active){await api('/runs/'+active.id+'/cancel',{});await poll();}}catch(e){el('trainingError').textContent=e.message;}};
+ async function load(file){el('policyLoadStatus').textContent='Loading checkpoint…';try{await api('/runs/'+selected+'/load',{file});el('policyLoadStatus').textContent='Loaded '+file+'. Simulator reset using checkpoint timing.';showTab('sim');}catch(e){el('policyLoadStatus').textContent=e.message;}}
+ el('loadCheckpoint').onclick=()=>load('policy_candidate.pt');el('loadAccepted').onclick=()=>load('policy_accepted.pt');
+ poll();setInterval(poll,2500);
+});
+</script>
