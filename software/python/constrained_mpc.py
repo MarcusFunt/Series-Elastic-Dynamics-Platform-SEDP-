@@ -163,6 +163,72 @@ class ConstrainedMPC:
             kick_at=kick_at, kick_duration=kick_duration)
         return self._augmented_state(y_next, actuator_next)
 
+    def _transition_batch_torque(self, states, accelerations, *, time_s=0.,
+                                 kick_torque=0., kick_at=-1., kick_duration=0.):
+        """Advance torque-mode perturbations together for finite differences."""
+        states = np.asarray(states, dtype=float)
+        accelerations = np.asarray(accelerations, dtype=float)
+        if (states.ndim != 2 or states.shape[1] != 7
+                or accelerations.shape != (len(states),)):
+            raise ValueError('Batched torque transition requires (n, 7) states and (n,) accelerations')
+
+        applied = np.asarray([
+            self.controller.project_accel(state, float(accel))
+            for state, accel in zip(states, accelerations)
+        ])
+        torques = np.asarray([
+            self.controller.torque_from_accel(state, float(accel))
+            for state, accel in zip(states, applied)
+        ])
+        y = states.copy()
+        for i in range(round(self.cfg.control_dt / self.cfg.physics_dt)):
+            now = time_s + i * self.cfg.physics_dt
+            ext = kick_torque if kick_at >= 0 and kick_at <= now < kick_at + kick_duration else 0.
+            y = self.plant.rk4_batch(y, torques, self.cfg.physics_dt,
+                                     external_torque=ext)
+        return y
+
+    def _linearize_torque_transition(self, z, accel, *, time_s=0., kick_torque=0.,
+                                     kick_at=-1., kick_duration=0.):
+        """Compute transition Jacobians in one batched RK4 rollout."""
+        z = np.asarray(z, dtype=float)
+        points, inputs, epsilons = [], [], []
+        for i in range(len(z)):
+            eps = 1e-5 * max(1., abs(float(z[i])))
+            delta = np.zeros_like(z)
+            delta[i] = eps
+            points.extend((z + delta, z - delta))
+            inputs.extend((accel, accel))
+            epsilons.append(eps)
+
+        input_eps = 1e-4
+        points.extend((z, z))
+        inputs.extend((accel + input_eps, accel - input_eps))
+        outputs = self._transition_batch_torque(
+            np.asarray(points), np.asarray(inputs), time_s=time_s,
+            kick_torque=kick_torque, kick_at=kick_at,
+            kick_duration=kick_duration)
+        F = np.column_stack([
+            (outputs[2*i] - outputs[2*i+1]) / (2. * eps)
+            for i, eps in enumerate(epsilons)
+        ])
+        G = (outputs[-2] - outputs[-1]) / (2. * input_eps)
+        return F, G
+
+    @staticmethod
+    def _sparse_numerical_jacobian(function, point, columns):
+        """Finite-difference only state coordinates used by a scalar model."""
+        point = np.asarray(point, dtype=float)
+        jacobian = np.zeros(len(point))
+        for i in columns:
+            eps = 1e-5 * max(1., abs(float(point[i])))
+            delta = np.zeros_like(point)
+            delta[i] = eps
+            plus = float(np.asarray(function(point + delta)).reshape(-1)[0])
+            minus = float(np.asarray(function(point - delta)).reshape(-1)[0])
+            jacobian[i] = (plus - minus) / (2. * eps)
+        return jacobian
+
     def _command_source_plan(self, command_queue, time_s):
         """Map each predicted control interval to its issuing decision or a held value."""
         n = self.cfg.horizon
@@ -280,8 +346,9 @@ class ConstrainedMPC:
             state_offset = offset.copy()
             ref = tuple(refs[k])
             base_nom = nominal_u[k]
-            base_y = numerical_jacobian(
-                lambda s: np.array([self.controller.modern_accel(s[:7], ref, 'lqr')]), z_nom)[0]
+            base_y = self._sparse_numerical_jacobian(
+                lambda s: np.array([self.controller.modern_accel(s[:7], ref, 'lqr')]),
+                z_nom, (2, 3, 4, 5))
             residual_row = eye[k] - base_y @ S
             residual_const = -base_nom - base_y @ (offset - z_nom)
             constrain(residual_row, -c.residual_accel_limit - residual_const,
@@ -302,17 +369,24 @@ class ConstrainedMPC:
             f = lambda z: self._transition_augmented(
                 z, applied_nom, nominal_actuators[k], time_s=time_s + k*c.control_dt,
                 kick_torque=kick_torque, kick_at=kick_at, kick_duration=kick_duration)
-            F = numerical_jacobian(f, z_nom)
-            eps = .1 if c.actuator_mode == 'step_dir' else 1e-4
-            G = (self._transition_augmented(
-                    z_nom, applied_nom + eps, nominal_actuators[k],
-                    time_s=time_s + k*c.control_dt, kick_torque=kick_torque,
-                    kick_at=kick_at, kick_duration=kick_duration)
-                 - self._transition_augmented(
-                    z_nom, applied_nom - eps, nominal_actuators[k],
-                    time_s=time_s + k*c.control_dt, kick_torque=kick_torque,
-                    kick_at=kick_at, kick_duration=kick_duration)) / (2. * eps)
-            affine = f(z_nom) - F @ z_nom - G * applied_nom
+            if c.actuator_mode == 'torque':
+                F, G = self._linearize_torque_transition(
+                    z_nom, applied_nom, time_s=time_s + k*c.control_dt,
+                    kick_torque=kick_torque, kick_at=kick_at,
+                    kick_duration=kick_duration)
+            else:
+                F = numerical_jacobian(f, z_nom)
+                eps = .1
+                G = (self._transition_augmented(
+                        z_nom, applied_nom + eps, nominal_actuators[k],
+                        time_s=time_s + k*c.control_dt, kick_torque=kick_torque,
+                        kick_at=kick_at, kick_duration=kick_duration)
+                     - self._transition_augmented(
+                        z_nom, applied_nom - eps, nominal_actuators[k],
+                        time_s=time_s + k*c.control_dt, kick_torque=kick_torque,
+                        kick_at=kick_at, kick_duration=kick_duration)) / (2. * eps)
+            # The nominal rollout already evaluated this exact transition.
+            affine = nominal_z[k + 1] - F @ z_nom - G * applied_nom
             source = sources[k]
             source_row = np.zeros(n) if source is None else eye[source]
             source_constant = fixed[k] if source is None else 0.
@@ -334,8 +408,9 @@ class ConstrainedMPC:
             # own torque saturation dynamics and records that saturation instead.
             if c.actuator_mode == 'torque':
                 torque_nom = self.controller.torque_from_accel(y_nom, applied_nom)
-                torque_y = numerical_jacobian(
-                    lambda zz: np.array([self.controller.torque_from_accel(zz[:7], applied_nom)]), z_nom)[0]
+                torque_y = self._sparse_numerical_jacobian(
+                    lambda zz: np.array([self.controller.torque_from_accel(zz[:7], applied_nom)]),
+                    z_nom, (1, 3))
                 torque_a = (self.controller.torque_from_accel(y_nom, applied_nom + 1e-4)
                             - self.controller.torque_from_accel(y_nom, applied_nom - 1e-4)) / 2e-4
                 torque_source_row = np.zeros(n) if source is None else eye[source]
