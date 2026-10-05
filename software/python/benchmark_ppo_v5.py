@@ -44,20 +44,16 @@ def _env(seed, n_envs, scalar_reference=False):
     return env
 
 
-def _benchmark(mode, n_envs, steps, repeats):
-    rates = []
+def _benchmark_once(mode, n_envs, steps, repeat):
     actions = np.zeros((n_envs, 1), dtype=np.float32)
-    for repeat in range(repeats):
-        env = _env(9000 + repeat, n_envs, scalar_reference=(mode == 'scalar_reference'))
-        for _ in range(10):
-            env.step(actions)
-        started = time.perf_counter()
-        for _ in range(steps):
-            env.step(actions)
-        elapsed = time.perf_counter() - started
-        rates.append(n_envs * steps / elapsed)
-    return {'transitions_per_second': rates,
-            'median_transitions_per_second': float(np.median(rates))}
+    env = _env(9000 + repeat, n_envs, scalar_reference=(mode == 'scalar_reference'))
+    for _ in range(10):
+        env.step(actions)
+    started = time.perf_counter()
+    for _ in range(steps):
+        env.step(actions)
+    elapsed = time.perf_counter() - started
+    return n_envs * steps / elapsed
 
 
 def _seeded_parity(steps):
@@ -132,6 +128,18 @@ def main():
         parser.error('counts must be positive')
 
     started = time.perf_counter()
+    rates = {'scalar_reference': [], 'vectorized': []}
+    paired_speedups = []
+    pair_orders = []
+    for repeat in range(args.repeats):
+        modes = (('scalar_reference', 'vectorized') if repeat % 2 == 0
+                 else ('vectorized', 'scalar_reference'))
+        pair = {}
+        for mode in modes:
+            pair[mode] = _benchmark_once(mode, args.n_envs, args.steps, repeat)
+            rates[mode].append(pair[mode])
+        pair_orders.append(list(modes))
+        paired_speedups.append(pair['vectorized'] / pair['scalar_reference'])
     result = {
         'benchmark': 'sedp-v4-ppo-rollout-throughput',
         'source_revision': _source_revision(),
@@ -140,13 +148,14 @@ def main():
         'config': {'n_envs': args.n_envs, 'vector_steps_per_repeat': args.steps,
                    'repeats': args.repeats, 'history_length': 8,
                    'sensor_noise': True, 'actuator_mode': 'torque'},
-        'scalar_reference': _benchmark('scalar_reference', args.n_envs,
-                                       args.steps, args.repeats),
-        'vectorized': _benchmark('vectorized', args.n_envs, args.steps, args.repeats),
+        'pair_order': pair_orders,
+        'scalar_reference': {'transitions_per_second': rates['scalar_reference'],
+                             'median_transitions_per_second': float(np.median(rates['scalar_reference']))},
+        'vectorized': {'transitions_per_second': rates['vectorized'],
+                       'median_transitions_per_second': float(np.median(rates['vectorized']))},
+        'paired_speedups': paired_speedups,
+        'median_paired_speedup': float(np.median(paired_speedups)),
     }
-    before = result['scalar_reference']['median_transitions_per_second']
-    after = result['vectorized']['median_transitions_per_second']
-    result['speedup'] = after / before if before else None
     result['seeded_parity'] = _seeded_parity(args.parity_steps)
     if args.profile:
         result['scalar_profile'] = _profile_scalar(60)
