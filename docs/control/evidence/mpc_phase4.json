@@ -1,0 +1,1517 @@
+{
+  "report": "SEDP Phase 4 constrained MPC comparison",
+  "method": {
+    "scenario_names": [
+      "step",
+      "aggressive",
+      "square_stress"
+    ],
+    "trajectory_modes": {
+      "step": "step",
+      "aggressive": "aggressive",
+      "square_stress": "aggressive_square"
+    },
+    "duration_seconds": 1.6,
+    "horizon": 4,
+    "physics_dt": 0.001,
+    "control_dt": 0.01,
+    "initial_state": "zero state, identical for paired controllers",
+    "randomization": false,
+    "disturbance_torque": 0.0,
+    "legacy_baseline": "preserved pre-Phase-4 ConstrainedMPC source and objective, torque mode with zero command latency",
+    "tuned_objective_weights": {
+      "position": 1.8,
+      "velocity": 0.12,
+      "angle": 3.2,
+      "angular_rate": 0.8,
+      "action": 0.04,
+      "slew": 0.06
+    },
+    "tuned_scales": {
+      "position": 0.006,
+      "velocity": 0.35,
+      "angle_rad": 0.0872664626,
+      "angular_rate_rad_s": 1.745329252,
+      "acceleration_residual": 2.5
+    },
+    "step_dir_params": {
+      "step_angle_rad": 0.001963495408493621,
+      "max_velocity_rad_s": 55.0,
+      "max_acceleration_rad_s2": 300.0,
+      "tracking_time_constant_s": 0.015,
+      "position_gain_nm_per_rad": 20.0,
+      "velocity_gain_nms_per_rad": 0.0015
+    },
+    "delayed_command": {
+      "delay_seconds": 0.015,
+      "jitter_seconds": 0.003
+    }
+  },
+  "comparisons": {
+    "phase4_weights_vs_preserved_mpc": {
+      "accepted": false,
+      "mean_angle_rms_ratio": 0.906958096045494,
+      "mean_energy_ratio": 0.8666195896424421,
+      "mean_fallback_fraction_delta": 0.03541666666666666,
+      "per_case_regressions_checked": true,
+      "reasons": [
+        "('aggressive', 0, False, 'torque', 0.0, 0.0): position_rmse_mm regressed beyond 2% paired bound",
+        "('aggressive', 0, False, 'torque', 0.0, 0.0): peak rail fraction regressed by more than 0.01",
+        "('square_stress', 0, False, 'torque', 0.0, 0.0): peak rail fraction regressed by more than 0.01",
+        "('square_stress', 0, False, 'torque', 0.0, 0.0): MPC fallback fraction regressed by more than 0.02",
+        "('step', 0, False, 'torque', 0.0, 0.0): position_rmse_mm regressed beyond 2% paired bound",
+        "('step', 0, False, 'torque', 0.0, 0.0): MPC fallback fraction regressed by more than 0.02"
+      ],
+      "pairs": [
+        {
+          "scenario": "aggressive",
+          "seed": 0,
+          "randomized": false,
+          "actuator_mode": "torque",
+          "changes": {
+            "angle_rms_deg": 0.015265088861570408,
+            "peak_angle_deg": -0.1883915597734509,
+            "position_rmse_mm": 0.9531501638016828,
+            "peak_rail_fraction": 0.05151100984358481,
+            "saturation_fraction": 0.0,
+            "stop_contact_fraction": 0.0,
+            "max_soft_rail_violation_fraction": 0.0,
+            "max_carriage_speed_violation_m_s": 0.0,
+            "max_motor_speed_violation_rad_s": 0.0,
+            "energy_integral_mJs": -0.004998683306361107,
+            "mpc_fallback_fraction": 0.012500000000000004
+          },
+          "baseline_outcomes": {
+            "success": 154,
+            "nonlinear_actuator_rejection": 6
+          },
+          "candidate_outcomes": {
+            "success": 152,
+            "nonlinear_actuator_rejection": 8
+          }
+        },
+        {
+          "scenario": "square_stress",
+          "seed": 0,
+          "randomized": false,
+          "actuator_mode": "torque",
+          "changes": {
+            "angle_rms_deg": -0.29811560277103677,
+            "peak_angle_deg": -0.5890352065143265,
+            "position_rmse_mm": -0.6285939652771226,
+            "peak_rail_fraction": 0.03312038767173764,
+            "saturation_fraction": 0.0,
+            "stop_contact_fraction": 0.0,
+            "max_soft_rail_violation_fraction": 0.0,
+            "max_carriage_speed_violation_m_s": 0.0,
+            "max_motor_speed_violation_rad_s": 0.0,
+            "energy_integral_mJs": -0.18986175598752553,
+            "mpc_fallback_fraction": 0.04999999999999999
+          },
+          "baseline_outcomes": {
+            "nonlinear_actuator_rejection": 35,
+            "success": 125
+          },
+          "candidate_outcomes": {
+            "nonlinear_actuator_rejection": 43,
+            "success": 117
+          }
+        },
+        {
+          "scenario": "step",
+          "seed": 0,
+          "randomized": false,
+          "actuator_mode": "torque",
+          "changes": {
+            "angle_rms_deg": -0.34380188522383737,
+            "peak_angle_deg": -1.0022345742755636,
+            "position_rmse_mm": 0.2626181394990379,
+            "peak_rail_fraction": -0.009014668377189228,
+            "saturation_fraction": 0.0,
+            "stop_contact_fraction": 0.0,
+            "max_soft_rail_violation_fraction": 0.0,
+            "max_carriage_speed_violation_m_s": 0.0,
+            "max_motor_speed_violation_rad_s": 0.0,
+            "energy_integral_mJs": -0.10370140350420076,
+            "mpc_fallback_fraction": 0.04375
+          },
+          "baseline_outcomes": {
+            "success": 147,
+            "nonlinear_actuator_rejection": 13
+          },
+          "candidate_outcomes": {
+            "success": 140,
+            "nonlinear_actuator_rejection": 20
+          }
+        }
+      ]
+    },
+    "torque_mpc_vs_lqr": [
+      {
+        "scenario": "aggressive",
+        "seed": 0,
+        "actuator_mode": "torque",
+        "command_delay_seconds": 0.0,
+        "command_jitter_seconds": 0.0,
+        "left": "lqr",
+        "right": "mpc",
+        "position_rmse_mm": {
+          "left": 4.973057943153259,
+          "right": 4.0230964319710445
+        },
+        "angle_rms_deg": {
+          "left": 1.6680877348118117,
+          "right": 2.881132012485166
+        },
+        "peak_angle_deg": {
+          "left": 4.0052444716673925,
+          "right": 6.708410392465784
+        },
+        "peak_rail_fraction": {
+          "left": 0.7211785842985537,
+          "right": 0.6940851006280834
+        },
+        "stop_contact_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_soft_rail_violation_fraction": {
+          "left": 0.001178584298553741,
+          "right": 0.0
+        },
+        "max_carriage_speed_violation_m_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_motor_speed_violation_rad_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "terminated": {
+          "left": false,
+          "right": false
+        },
+        "energy_integral_mJs": {
+          "left": 0.28294218277315497,
+          "right": 0.9398126796413122
+        },
+        "fallback_fraction": {
+          "left": 0.0,
+          "right": 0.05
+        },
+        "outcome_counts": {
+          "left": {},
+          "right": {
+            "success": 152,
+            "nonlinear_actuator_rejection": 8
+          }
+        },
+        "solve_p50_ms": {
+          "left": 0.0,
+          "right": 72.91034999070689
+        },
+        "solve_p95_ms": {
+          "left": 0.0,
+          "right": 96.4202699746238
+        }
+      },
+      {
+        "scenario": "square_stress",
+        "seed": 0,
+        "actuator_mode": "torque",
+        "command_delay_seconds": 0.0,
+        "command_jitter_seconds": 0.0,
+        "left": "lqr",
+        "right": "mpc",
+        "position_rmse_mm": {
+          "left": 28.51671903247298,
+          "right": 27.68713183866718
+        },
+        "angle_rms_deg": {
+          "left": 1.6900910564489704,
+          "right": 3.0113365113290977
+        },
+        "peak_angle_deg": {
+          "left": 3.7323205086074727,
+          "right": 5.928986323654986
+        },
+        "peak_rail_fraction": {
+          "left": 0.6249206303787537,
+          "right": 0.6826737610716223
+        },
+        "stop_contact_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_soft_rail_violation_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_carriage_speed_violation_m_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_motor_speed_violation_rad_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "terminated": {
+          "left": false,
+          "right": false
+        },
+        "energy_integral_mJs": {
+          "left": 0.5011746597856033,
+          "right": 1.2378322587027395
+        },
+        "fallback_fraction": {
+          "left": 0.0,
+          "right": 0.26875
+        },
+        "outcome_counts": {
+          "left": {},
+          "right": {
+            "nonlinear_actuator_rejection": 43,
+            "success": 117
+          }
+        },
+        "solve_p50_ms": {
+          "left": 0.0,
+          "right": 69.51189998653717
+        },
+        "solve_p95_ms": {
+          "left": 0.0,
+          "right": 78.4029649948934
+        }
+      },
+      {
+        "scenario": "step",
+        "seed": 0,
+        "actuator_mode": "torque",
+        "command_delay_seconds": 0.0,
+        "command_jitter_seconds": 0.0,
+        "left": "lqr",
+        "right": "mpc",
+        "position_rmse_mm": {
+          "left": 11.142194711999394,
+          "right": 10.083806494599076
+        },
+        "angle_rms_deg": {
+          "left": 0.7561991176563942,
+          "right": 1.4249794412281054
+        },
+        "peak_angle_deg": {
+          "left": 1.8116599604822203,
+          "right": 3.4563505137555834
+        },
+        "peak_rail_fraction": {
+          "left": 0.5846284752241883,
+          "right": 0.6091014752976596
+        },
+        "stop_contact_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_soft_rail_violation_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_carriage_speed_violation_m_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_motor_speed_violation_rad_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "terminated": {
+          "left": false,
+          "right": false
+        },
+        "energy_integral_mJs": {
+          "left": 0.08597414535388959,
+          "right": 0.29230853971052234
+        },
+        "fallback_fraction": {
+          "left": 0.0,
+          "right": 0.125
+        },
+        "outcome_counts": {
+          "left": {},
+          "right": {
+            "success": 140,
+            "nonlinear_actuator_rejection": 20
+          }
+        },
+        "solve_p50_ms": {
+          "left": 0.0,
+          "right": 68.72895002015866
+        },
+        "solve_p95_ms": {
+          "left": 0.0,
+          "right": 86.55122499621936
+        }
+      }
+    ],
+    "step_dir_mpc_vs_lqr": [
+      {
+        "scenario": "aggressive",
+        "seed": 0,
+        "actuator_mode": "step_dir",
+        "command_delay_seconds": 0.0,
+        "command_jitter_seconds": 0.0,
+        "left": "lqr",
+        "right": "mpc",
+        "position_rmse_mm": {
+          "left": 35.61780213869687,
+          "right": 47.151959915803126
+        },
+        "angle_rms_deg": {
+          "left": 0.9452349253911118,
+          "right": 0.9413737842380697
+        },
+        "peak_angle_deg": {
+          "left": 2.1940785100974507,
+          "right": 2.2105678381681253
+        },
+        "peak_rail_fraction": {
+          "left": 0.6826224255290894,
+          "right": 0.8132932740946566
+        },
+        "stop_contact_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_soft_rail_violation_fraction": {
+          "left": 0.0,
+          "right": 0.09048117108385376
+        },
+        "max_carriage_speed_violation_m_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_motor_speed_violation_rad_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "terminated": {
+          "left": false,
+          "right": false
+        },
+        "energy_integral_mJs": {
+          "left": 5.972170647887738,
+          "right": 6.093307459977543
+        },
+        "fallback_fraction": {
+          "left": 0.0,
+          "right": 0.10625
+        },
+        "outcome_counts": {
+          "left": {},
+          "right": {
+            "success": 143,
+            "nonlinear_actuator_rejection": 9,
+            "solver_failure": 1,
+            "infeasible_initial_bounds": 7
+          }
+        },
+        "solve_p50_ms": {
+          "left": 0.0,
+          "right": 60.52249998901971
+        },
+        "solve_p95_ms": {
+          "left": 0.0,
+          "right": 76.73038998327682
+        }
+      },
+      {
+        "scenario": "square_stress",
+        "seed": 0,
+        "actuator_mode": "step_dir",
+        "command_delay_seconds": 0.0,
+        "command_jitter_seconds": 0.0,
+        "left": "lqr",
+        "right": "mpc",
+        "position_rmse_mm": {
+          "left": 19.684935524864176,
+          "right": 20.301300631270255
+        },
+        "angle_rms_deg": {
+          "left": 1.0007249237672717,
+          "right": 1.055373937556125
+        },
+        "peak_angle_deg": {
+          "left": 2.2166402554422837,
+          "right": 2.5772295954027733
+        },
+        "peak_rail_fraction": {
+          "left": 0.8262411109711031,
+          "right": 0.8258302586368798
+        },
+        "stop_contact_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_soft_rail_violation_fraction": {
+          "left": 0.10624111097110311,
+          "right": 0.10583025863687978
+        },
+        "max_carriage_speed_violation_m_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_motor_speed_violation_rad_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "terminated": {
+          "left": true,
+          "right": true
+        },
+        "energy_integral_mJs": {
+          "left": 2.638565456018581,
+          "right": 2.178983798671256
+        },
+        "fallback_fraction": {
+          "left": 0.0,
+          "right": 0.16393442622950818
+        },
+        "outcome_counts": {
+          "left": {},
+          "right": {
+            "nonlinear_actuator_rejection": 6,
+            "success": 51,
+            "solver_failure": 1,
+            "infeasible_initial_bounds": 3
+          }
+        },
+        "solve_p50_ms": {
+          "left": 0.0,
+          "right": 58.53570002363995
+        },
+        "solve_p95_ms": {
+          "left": 0.0,
+          "right": 83.04579998366535
+        }
+      },
+      {
+        "scenario": "step",
+        "seed": 0,
+        "actuator_mode": "step_dir",
+        "command_delay_seconds": 0.0,
+        "command_jitter_seconds": 0.0,
+        "left": "lqr",
+        "right": "mpc",
+        "position_rmse_mm": {
+          "left": 17.52923178587841,
+          "right": 32.981656390976426
+        },
+        "angle_rms_deg": {
+          "left": 0.839515248739482,
+          "right": 0.8687507992767167
+        },
+        "peak_angle_deg": {
+          "left": 1.7309365791696276,
+          "right": 1.835787605234098
+        },
+        "peak_rail_fraction": {
+          "left": 0.7115374809731105,
+          "right": 0.16975999312954348
+        },
+        "stop_contact_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_soft_rail_violation_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_carriage_speed_violation_m_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_motor_speed_violation_rad_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "terminated": {
+          "left": false,
+          "right": false
+        },
+        "energy_integral_mJs": {
+          "left": 5.584041487378012,
+          "right": 5.448167348419782
+        },
+        "fallback_fraction": {
+          "left": 0.0,
+          "right": 0.06875
+        },
+        "outcome_counts": {
+          "left": {},
+          "right": {
+            "success": 149,
+            "nonlinear_actuator_rejection": 11
+          }
+        },
+        "solve_p50_ms": {
+          "left": 0.0,
+          "right": 65.07934996625409
+        },
+        "solve_p95_ms": {
+          "left": 0.0,
+          "right": 124.14434998936476
+        }
+      }
+    ],
+    "delayed_mpc_vs_lqr": [
+      {
+        "scenario": "aggressive",
+        "seed": 0,
+        "actuator_mode": "torque",
+        "command_delay_seconds": 0.015,
+        "command_jitter_seconds": 0.003,
+        "left": "lqr",
+        "right": "mpc",
+        "position_rmse_mm": {
+          "left": 4.2298616261692645,
+          "right": 7.634938867082583
+        },
+        "angle_rms_deg": {
+          "left": 1.6764144560294179,
+          "right": 3.402630806861251
+        },
+        "peak_angle_deg": {
+          "left": 4.495283745646996,
+          "right": 7.475398920965836
+        },
+        "peak_rail_fraction": {
+          "left": 0.6512167360703878,
+          "right": 0.7108125412055768
+        },
+        "stop_contact_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_soft_rail_violation_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_carriage_speed_violation_m_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_motor_speed_violation_rad_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "terminated": {
+          "left": false,
+          "right": false
+        },
+        "energy_integral_mJs": {
+          "left": 0.5342680544951998,
+          "right": 1.360241694663239
+        },
+        "fallback_fraction": {
+          "left": 0.0,
+          "right": 0.00625
+        },
+        "outcome_counts": {
+          "left": {},
+          "right": {
+            "success": 159,
+            "nonlinear_actuator_rejection": 1
+          }
+        },
+        "solve_p50_ms": {
+          "left": 0.0,
+          "right": 38.30954997101799
+        },
+        "solve_p95_ms": {
+          "left": 0.0,
+          "right": 48.692305045551606
+        }
+      },
+      {
+        "scenario": "square_stress",
+        "seed": 0,
+        "actuator_mode": "torque",
+        "command_delay_seconds": 0.015,
+        "command_jitter_seconds": 0.003,
+        "left": "lqr",
+        "right": "mpc",
+        "position_rmse_mm": {
+          "left": 27.821444568381494,
+          "right": 25.4093777777025
+        },
+        "angle_rms_deg": {
+          "left": 1.8396141002849644,
+          "right": 3.8429638559403765
+        },
+        "peak_angle_deg": {
+          "left": 4.531503634942738,
+          "right": 6.884667544174708
+        },
+        "peak_rail_fraction": {
+          "left": 0.560773262130819,
+          "right": 0.6867470612863138
+        },
+        "stop_contact_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_soft_rail_violation_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_carriage_speed_violation_m_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_motor_speed_violation_rad_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "terminated": {
+          "left": false,
+          "right": false
+        },
+        "energy_integral_mJs": {
+          "left": 1.1169086689147616,
+          "right": 2.134685523449617
+        },
+        "fallback_fraction": {
+          "left": 0.0,
+          "right": 0.01875
+        },
+        "outcome_counts": {
+          "left": {},
+          "right": {
+            "success": 157,
+            "nonlinear_actuator_rejection": 3
+          }
+        },
+        "solve_p50_ms": {
+          "left": 0.0,
+          "right": 38.44694996951148
+        },
+        "solve_p95_ms": {
+          "left": 0.0,
+          "right": 49.87097500707022
+        }
+      },
+      {
+        "scenario": "step",
+        "seed": 0,
+        "actuator_mode": "torque",
+        "command_delay_seconds": 0.015,
+        "command_jitter_seconds": 0.003,
+        "left": "lqr",
+        "right": "mpc",
+        "position_rmse_mm": {
+          "left": 11.740630733755138,
+          "right": 10.14562349027759
+        },
+        "angle_rms_deg": {
+          "left": 1.0385938471010239,
+          "right": 2.3961000001413777
+        },
+        "peak_angle_deg": {
+          "left": 2.7151034875760343,
+          "right": 4.52994396645467
+        },
+        "peak_rail_fraction": {
+          "left": 0.5443087695271271,
+          "right": 0.7219648358550766
+        },
+        "stop_contact_fraction": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_soft_rail_violation_fraction": {
+          "left": 0.0,
+          "right": 0.0013501266066262136
+        },
+        "max_carriage_speed_violation_m_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "max_motor_speed_violation_rad_s": {
+          "left": 0.0,
+          "right": 0.0
+        },
+        "terminated": {
+          "left": false,
+          "right": false
+        },
+        "energy_integral_mJs": {
+          "left": 0.5796117712085631,
+          "right": 0.6638666842193386
+        },
+        "fallback_fraction": {
+          "left": 0.0,
+          "right": 0.025
+        },
+        "outcome_counts": {
+          "left": {},
+          "right": {
+            "success": 156,
+            "nonlinear_actuator_rejection": 4
+          }
+        },
+        "solve_p50_ms": {
+          "left": 0.0,
+          "right": 41.6533499956131
+        },
+        "solve_p95_ms": {
+          "left": 0.0,
+          "right": 50.290224971831776
+        }
+      }
+    ]
+  },
+  "rows": [
+    {
+      "controller": "lqr",
+      "scenario": "step",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 1.8116599604822203,
+      "angle_rms_deg": 0.7561991176563942,
+      "position_rmse_mm": 11.142194711999394,
+      "peak_rail_fraction": 0.5846284752241883,
+      "saturation_fraction": 0.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 0.08597414535388959,
+      "estimator_position_rmse_mm": 0.00415239154014604,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.0,
+      "solve_p50_ms": 0.0,
+      "solve_p95_ms": 0.0,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0
+    },
+    {
+      "controller": "mpc_baseline",
+      "scenario": "step",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 4.458585088031147,
+      "angle_rms_deg": 1.7687813264519427,
+      "position_rmse_mm": 9.821188355100038,
+      "peak_rail_fraction": 0.6181161436748488,
+      "saturation_fraction": 0.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 0.3960099432147231,
+      "estimator_position_rmse_mm": 0.004011281492878651,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.08125,
+      "solve_p50_ms": 26.163550035562366,
+      "solve_p95_ms": 56.651270025758976,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0,
+      "mpc_outcome_counts": {
+        "success": 147,
+        "nonlinear_actuator_rejection": 13
+      },
+      "mpc_outcome_rates": {
+        "success": 0.91875,
+        "nonlinear_actuator_rejection": 0.08125
+      },
+      "mpc_reason_counts": {
+        "success": 147,
+        "nonlinear actuator/authority check": 13
+      },
+      "mpc_nonlinear_max_constraint_violation": 0.0,
+      "mpc_nonlinear_peak_rail_fraction": 0.0,
+      "step_dir_torque_saturated_intervals": 0
+    },
+    {
+      "controller": "mpc",
+      "scenario": "step",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 3.4563505137555834,
+      "angle_rms_deg": 1.4249794412281054,
+      "position_rmse_mm": 10.083806494599076,
+      "peak_rail_fraction": 0.6091014752976596,
+      "saturation_fraction": 0.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 0.29230853971052234,
+      "estimator_position_rmse_mm": 0.004196906601025883,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.125,
+      "solve_p50_ms": 68.72895002015866,
+      "solve_p95_ms": 86.55122499621936,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0,
+      "mpc_outcome_counts": {
+        "success": 140,
+        "nonlinear_actuator_rejection": 20
+      },
+      "mpc_outcome_rates": {
+        "success": 0.875,
+        "nonlinear_actuator_rejection": 0.125
+      },
+      "mpc_reason_counts": {
+        "success": 140,
+        "nonlinear residual authority check": 15,
+        "command projection changed the optimized command": 5
+      },
+      "mpc_nonlinear_max_constraint_violation": 0.6531761668294229,
+      "mpc_nonlinear_peak_rail_fraction": 0.6120095629797437,
+      "step_dir_torque_saturated_intervals": 0
+    },
+    {
+      "controller": "lqr",
+      "scenario": "aggressive",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 4.0052444716673925,
+      "angle_rms_deg": 1.6680877348118117,
+      "position_rmse_mm": 4.973057943153259,
+      "peak_rail_fraction": 0.7211785842985537,
+      "saturation_fraction": 0.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 0.28294218277315497,
+      "estimator_position_rmse_mm": 0.003784464622308968,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.001178584298553741,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.0,
+      "solve_p50_ms": 0.0,
+      "solve_p95_ms": 0.0,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0
+    },
+    {
+      "controller": "mpc_baseline",
+      "scenario": "aggressive",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 6.896801952239235,
+      "angle_rms_deg": 2.8658669236235954,
+      "position_rmse_mm": 3.0699462681693617,
+      "peak_rail_fraction": 0.6425740907844986,
+      "saturation_fraction": 0.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 0.9448113629476733,
+      "estimator_position_rmse_mm": 0.00412356954267858,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.0375,
+      "solve_p50_ms": 22.14615000411868,
+      "solve_p95_ms": 28.578685014508665,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0,
+      "mpc_outcome_counts": {
+        "success": 154,
+        "nonlinear_actuator_rejection": 6
+      },
+      "mpc_outcome_rates": {
+        "success": 0.9625,
+        "nonlinear_actuator_rejection": 0.0375
+      },
+      "mpc_reason_counts": {
+        "success": 154,
+        "nonlinear actuator/authority check": 6
+      },
+      "mpc_nonlinear_max_constraint_violation": 0.0,
+      "mpc_nonlinear_peak_rail_fraction": 0.0,
+      "step_dir_torque_saturated_intervals": 0
+    },
+    {
+      "controller": "mpc",
+      "scenario": "aggressive",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 6.708410392465784,
+      "angle_rms_deg": 2.881132012485166,
+      "position_rmse_mm": 4.0230964319710445,
+      "peak_rail_fraction": 0.6940851006280834,
+      "saturation_fraction": 0.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 0.9398126796413122,
+      "estimator_position_rmse_mm": 0.003981693930071377,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.05,
+      "solve_p50_ms": 72.91034999070689,
+      "solve_p95_ms": 96.4202699746238,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0,
+      "mpc_outcome_counts": {
+        "success": 152,
+        "nonlinear_actuator_rejection": 8
+      },
+      "mpc_outcome_rates": {
+        "success": 0.95,
+        "nonlinear_actuator_rejection": 0.05
+      },
+      "mpc_reason_counts": {
+        "success": 152,
+        "command projection changed the optimized command": 5,
+        "nonlinear residual authority check": 3
+      },
+      "mpc_nonlinear_max_constraint_violation": 0.49847035281617913,
+      "mpc_nonlinear_peak_rail_fraction": 0.6935134381090189,
+      "step_dir_torque_saturated_intervals": 0
+    },
+    {
+      "controller": "lqr",
+      "scenario": "square_stress",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 3.7323205086074727,
+      "angle_rms_deg": 1.6900910564489704,
+      "position_rmse_mm": 28.51671903247298,
+      "peak_rail_fraction": 0.6249206303787537,
+      "saturation_fraction": 0.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 0.5011746597856033,
+      "estimator_position_rmse_mm": 0.004541327373693242,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.0,
+      "solve_p50_ms": 0.0,
+      "solve_p95_ms": 0.0,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0
+    },
+    {
+      "controller": "mpc_baseline",
+      "scenario": "square_stress",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 6.518021530169312,
+      "angle_rms_deg": 3.3094521141001345,
+      "position_rmse_mm": 28.315725803944304,
+      "peak_rail_fraction": 0.6495533733998846,
+      "saturation_fraction": 0.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 1.427694014690265,
+      "estimator_position_rmse_mm": 0.004094754925988719,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.21875,
+      "solve_p50_ms": 21.859850006876513,
+      "solve_p95_ms": 27.192004985408854,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0,
+      "mpc_outcome_counts": {
+        "nonlinear_actuator_rejection": 35,
+        "success": 125
+      },
+      "mpc_outcome_rates": {
+        "nonlinear_actuator_rejection": 0.21875,
+        "success": 0.78125
+      },
+      "mpc_reason_counts": {
+        "nonlinear actuator/authority check": 35,
+        "success": 125
+      },
+      "mpc_nonlinear_max_constraint_violation": 0.0,
+      "mpc_nonlinear_peak_rail_fraction": 0.0,
+      "step_dir_torque_saturated_intervals": 0
+    },
+    {
+      "controller": "mpc",
+      "scenario": "square_stress",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 5.928986323654986,
+      "angle_rms_deg": 3.0113365113290977,
+      "position_rmse_mm": 27.68713183866718,
+      "peak_rail_fraction": 0.6826737610716223,
+      "saturation_fraction": 0.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 1.2378322587027395,
+      "estimator_position_rmse_mm": 0.004264808238095291,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.26875,
+      "solve_p50_ms": 69.51189998653717,
+      "solve_p95_ms": 78.4029649948934,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0,
+      "mpc_outcome_counts": {
+        "nonlinear_actuator_rejection": 43,
+        "success": 117
+      },
+      "mpc_outcome_rates": {
+        "nonlinear_actuator_rejection": 0.26875,
+        "success": 0.73125
+      },
+      "mpc_reason_counts": {
+        "nonlinear residual authority check": 30,
+        "success": 117,
+        "command projection changed the optimized command": 13
+      },
+      "mpc_nonlinear_max_constraint_violation": 0.7961996375721394,
+      "mpc_nonlinear_peak_rail_fraction": 0.6829558546616634,
+      "step_dir_torque_saturated_intervals": 0
+    },
+    {
+      "controller": "lqr",
+      "scenario": "step",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 1.7309365791696276,
+      "angle_rms_deg": 0.839515248739482,
+      "position_rmse_mm": 17.52923178587841,
+      "peak_rail_fraction": 0.7115374809731105,
+      "saturation_fraction": 0.89375,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 5.584041487378012,
+      "estimator_position_rmse_mm": 0.1729311917317078,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.0,
+      "solve_p50_ms": 0.0,
+      "solve_p95_ms": 0.0,
+      "samples": 160,
+      "actuator_mode": "step_dir",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0
+    },
+    {
+      "controller": "mpc",
+      "scenario": "step",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 1.835787605234098,
+      "angle_rms_deg": 0.8687507992767167,
+      "position_rmse_mm": 32.981656390976426,
+      "peak_rail_fraction": 0.16975999312954348,
+      "saturation_fraction": 0.89375,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 5.448167348419782,
+      "estimator_position_rmse_mm": 0.18388727438462757,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.06875,
+      "solve_p50_ms": 65.07934996625409,
+      "solve_p95_ms": 124.14434998936476,
+      "samples": 160,
+      "actuator_mode": "step_dir",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0,
+      "mpc_outcome_counts": {
+        "success": 149,
+        "nonlinear_actuator_rejection": 11
+      },
+      "mpc_outcome_rates": {
+        "success": 0.93125,
+        "nonlinear_actuator_rejection": 0.06875
+      },
+      "mpc_reason_counts": {
+        "success": 149,
+        "nonlinear residual authority check": 11
+      },
+      "mpc_nonlinear_max_constraint_violation": 1.0896236074146475,
+      "mpc_nonlinear_peak_rail_fraction": 0.18634189788994493,
+      "step_dir_torque_saturated_intervals": 532
+    },
+    {
+      "controller": "lqr",
+      "scenario": "aggressive",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 2.1940785100974507,
+      "angle_rms_deg": 0.9452349253911118,
+      "position_rmse_mm": 35.61780213869687,
+      "peak_rail_fraction": 0.6826224255290894,
+      "saturation_fraction": 0.975,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 5.972170647887738,
+      "estimator_position_rmse_mm": 0.1874836167235315,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.0,
+      "solve_p50_ms": 0.0,
+      "solve_p95_ms": 0.0,
+      "samples": 160,
+      "actuator_mode": "step_dir",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0
+    },
+    {
+      "controller": "mpc",
+      "scenario": "aggressive",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 2.2105678381681253,
+      "angle_rms_deg": 0.9413737842380697,
+      "position_rmse_mm": 47.151959915803126,
+      "peak_rail_fraction": 0.8132932740946566,
+      "saturation_fraction": 0.98125,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 6.093307459977543,
+      "estimator_position_rmse_mm": 0.1805795785981309,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.09048117108385376,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.10625,
+      "solve_p50_ms": 60.52249998901971,
+      "solve_p95_ms": 76.73038998327682,
+      "samples": 160,
+      "actuator_mode": "step_dir",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0,
+      "mpc_outcome_counts": {
+        "success": 143,
+        "nonlinear_actuator_rejection": 9,
+        "solver_failure": 1,
+        "infeasible_initial_bounds": 7
+      },
+      "mpc_outcome_rates": {
+        "success": 0.89375,
+        "nonlinear_actuator_rejection": 0.05625,
+        "solver_failure": 0.00625,
+        "infeasible_initial_bounds": 0.04375
+      },
+      "mpc_reason_counts": {
+        "success": 143,
+        "nonlinear residual authority check": 6,
+        "command projection changed the optimized command": 3,
+        "Positive directional derivative for linesearch": 1,
+        "nominal state has no admissible command inside the soft rail": 7
+      },
+      "mpc_nonlinear_max_constraint_violation": 4.343783296612043,
+      "mpc_nonlinear_peak_rail_fraction": 0.8044883372348723,
+      "step_dir_torque_saturated_intervals": 566
+    },
+    {
+      "controller": "lqr",
+      "scenario": "square_stress",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 2.2166402554422837,
+      "angle_rms_deg": 1.0007249237672717,
+      "position_rmse_mm": 19.684935524864176,
+      "peak_rail_fraction": 0.8262411109711031,
+      "saturation_fraction": 1.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 2.638565456018581,
+      "estimator_position_rmse_mm": 0.19471764040992678,
+      "projection_fraction": 0.0,
+      "terminated": true,
+      "max_soft_rail_violation_fraction": 0.10624111097110311,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.0,
+      "solve_p50_ms": 0.0,
+      "solve_p95_ms": 0.0,
+      "samples": 72,
+      "actuator_mode": "step_dir",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0
+    },
+    {
+      "controller": "mpc",
+      "scenario": "square_stress",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 2.5772295954027733,
+      "angle_rms_deg": 1.055373937556125,
+      "position_rmse_mm": 20.301300631270255,
+      "peak_rail_fraction": 0.8258302586368798,
+      "saturation_fraction": 1.0,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 2.178983798671256,
+      "estimator_position_rmse_mm": 0.19354962117146846,
+      "projection_fraction": 0.0,
+      "terminated": true,
+      "max_soft_rail_violation_fraction": 0.10583025863687978,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.16393442622950818,
+      "solve_p50_ms": 58.53570002363995,
+      "solve_p95_ms": 83.04579998366535,
+      "samples": 61,
+      "actuator_mode": "step_dir",
+      "command_delay_seconds": 0.0,
+      "command_jitter_seconds": 0.0,
+      "mpc_outcome_counts": {
+        "nonlinear_actuator_rejection": 6,
+        "success": 51,
+        "solver_failure": 1,
+        "infeasible_initial_bounds": 3
+      },
+      "mpc_outcome_rates": {
+        "nonlinear_actuator_rejection": 0.09836065573770492,
+        "success": 0.8360655737704918,
+        "solver_failure": 0.01639344262295082,
+        "infeasible_initial_bounds": 0.04918032786885246
+      },
+      "mpc_reason_counts": {
+        "nonlinear residual authority check": 5,
+        "success": 51,
+        "command projection changed the optimized command": 1,
+        "Positive directional derivative for linesearch": 1,
+        "nominal state has no admissible command inside the soft rail": 3
+      },
+      "mpc_nonlinear_max_constraint_violation": 0.9825354660099594,
+      "mpc_nonlinear_peak_rail_fraction": 0.795835366451439,
+      "step_dir_torque_saturated_intervals": 204
+    },
+    {
+      "controller": "lqr",
+      "scenario": "step",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 2.7151034875760343,
+      "angle_rms_deg": 1.0385938471010239,
+      "position_rmse_mm": 11.740630733755138,
+      "peak_rail_fraction": 0.5443087695271271,
+      "saturation_fraction": 0.14375,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 0.5796117712085631,
+      "estimator_position_rmse_mm": 0.003922883888411317,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.0,
+      "solve_p50_ms": 0.0,
+      "solve_p95_ms": 0.0,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.015,
+      "command_jitter_seconds": 0.003
+    },
+    {
+      "controller": "mpc",
+      "scenario": "step",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 4.52994396645467,
+      "angle_rms_deg": 2.3961000001413777,
+      "position_rmse_mm": 10.14562349027759,
+      "peak_rail_fraction": 0.7219648358550766,
+      "saturation_fraction": 0.075,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 0.6638666842193386,
+      "estimator_position_rmse_mm": 0.0039097555948185815,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0013501266066262136,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.025,
+      "solve_p50_ms": 41.6533499956131,
+      "solve_p95_ms": 50.290224971831776,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.015,
+      "command_jitter_seconds": 0.003,
+      "mpc_outcome_counts": {
+        "success": 156,
+        "nonlinear_actuator_rejection": 4
+      },
+      "mpc_outcome_rates": {
+        "success": 0.975,
+        "nonlinear_actuator_rejection": 0.025
+      },
+      "mpc_reason_counts": {
+        "success": 156,
+        "command projection changed the optimized command": 4
+      },
+      "mpc_nonlinear_max_constraint_violation": 0.0918870836268808,
+      "mpc_nonlinear_peak_rail_fraction": 0.7215213007588108,
+      "step_dir_torque_saturated_intervals": 0
+    },
+    {
+      "controller": "lqr",
+      "scenario": "aggressive",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 4.495283745646996,
+      "angle_rms_deg": 1.6764144560294179,
+      "position_rmse_mm": 4.2298616261692645,
+      "peak_rail_fraction": 0.6512167360703878,
+      "saturation_fraction": 0.05625,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 0.5342680544951998,
+      "estimator_position_rmse_mm": 0.004015985131399354,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.0,
+      "solve_p50_ms": 0.0,
+      "solve_p95_ms": 0.0,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.015,
+      "command_jitter_seconds": 0.003
+    },
+    {
+      "controller": "mpc",
+      "scenario": "aggressive",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 7.475398920965836,
+      "angle_rms_deg": 3.402630806861251,
+      "position_rmse_mm": 7.634938867082583,
+      "peak_rail_fraction": 0.7108125412055768,
+      "saturation_fraction": 0.05,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 1.360241694663239,
+      "estimator_position_rmse_mm": 0.004819810202480858,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.00625,
+      "solve_p50_ms": 38.30954997101799,
+      "solve_p95_ms": 48.692305045551606,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.015,
+      "command_jitter_seconds": 0.003,
+      "mpc_outcome_counts": {
+        "success": 159,
+        "nonlinear_actuator_rejection": 1
+      },
+      "mpc_outcome_rates": {
+        "success": 0.99375,
+        "nonlinear_actuator_rejection": 0.00625
+      },
+      "mpc_reason_counts": {
+        "success": 159,
+        "command projection changed the optimized command": 1
+      },
+      "mpc_nonlinear_max_constraint_violation": 0.009304898336230716,
+      "mpc_nonlinear_peak_rail_fraction": 0.7109475695509636,
+      "step_dir_torque_saturated_intervals": 0
+    },
+    {
+      "controller": "lqr",
+      "scenario": "square_stress",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 4.531503634942738,
+      "angle_rms_deg": 1.8396141002849644,
+      "position_rmse_mm": 27.821444568381494,
+      "peak_rail_fraction": 0.560773262130819,
+      "saturation_fraction": 0.1625,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 1.1169086689147616,
+      "estimator_position_rmse_mm": 0.004195960248599696,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.0,
+      "solve_p50_ms": 0.0,
+      "solve_p95_ms": 0.0,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.015,
+      "command_jitter_seconds": 0.003
+    },
+    {
+      "controller": "mpc",
+      "scenario": "square_stress",
+      "seed": 0,
+      "randomized": false,
+      "peak_angle_deg": 6.884667544174708,
+      "angle_rms_deg": 3.8429638559403765,
+      "position_rmse_mm": 25.4093777777025,
+      "peak_rail_fraction": 0.6867470612863138,
+      "saturation_fraction": 0.1,
+      "stop_contact_fraction": 0.0,
+      "energy_integral_mJs": 2.134685523449617,
+      "estimator_position_rmse_mm": 0.004123634029585978,
+      "projection_fraction": 0.0,
+      "terminated": false,
+      "max_soft_rail_violation_fraction": 0.0,
+      "max_carriage_speed_violation_m_s": 0.0,
+      "max_motor_speed_violation_rad_s": 0.0,
+      "mpc_fallback_fraction": 0.01875,
+      "solve_p50_ms": 38.44694996951148,
+      "solve_p95_ms": 49.87097500707022,
+      "samples": 160,
+      "actuator_mode": "torque",
+      "command_delay_seconds": 0.015,
+      "command_jitter_seconds": 0.003,
+      "mpc_outcome_counts": {
+        "success": 157,
+        "nonlinear_actuator_rejection": 3
+      },
+      "mpc_outcome_rates": {
+        "success": 0.98125,
+        "nonlinear_actuator_rejection": 0.01875
+      },
+      "mpc_reason_counts": {
+        "success": 157,
+        "command projection changed the optimized command": 3
+      },
+      "mpc_nonlinear_max_constraint_violation": 0.21031365768759214,
+      "mpc_nonlinear_peak_rail_fraction": 0.6869491118396653,
+      "step_dir_torque_saturated_intervals": 0
+    }
+  ]
+}

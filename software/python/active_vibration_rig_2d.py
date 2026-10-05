@@ -81,10 +81,12 @@ or, at every integration step,
     [ M   B ] [x_ddot    ] = [rhs_x    ]
     [ B  Jp ] [theta_ddot]   [rhs_theta]
 
-The gravity expression is useful because it handles different mounting
-orientations while preserving theta=0 as the preloaded static neutral pose.
-For the intended upright spring-mounted resonator use theta_0=0.  The small-
-angle effective rotational stiffness is then approximately
+The gravity expression is incremental about theta=0 for different mounting
+orientations. In equivalent-torsion mode that pose is statically balanced; in
+geometric-spring mode the selected spring pair must also have zero torque
+there, or a separate preload-compensation torque must be modeled. For the
+intended upright resonator use theta_0=0. In equivalent-torsion mode, the
+small-angle effective rotational stiffness is approximately
 
     k_eff ~= k_theta - m_r*g*l
 
@@ -175,6 +177,13 @@ class PlantParams:
     k_theta: float = 0.42                # N m / rad
     k_theta3: float = 0.0                # N m / rad^3
     c_theta: float = 0.006               # N m s / rad
+    use_geometric_springs: bool = False
+    spring_anchor_half_spacing: float = 0.035  # m; symmetric carriage anchors
+    spring_anchor_y: float = -0.015      # m; anchor coordinate relative to pivot
+    spring_shaft_radius: float = 0.040   # m; spring attachment radius
+    spring_k: float = 500.0              # N/m per spring
+    spring_d: float = 1.0                # N s/m per spring
+    spring_free_length: float = 0.010    # m per spring
     theta_coulomb: float = 0.0015        # N m, smooth Coulomb friction
     theta_friction_eps: float = 0.05     # rad/s
 
@@ -226,15 +235,195 @@ class PlantParams:
 
     @property
     def effective_small_angle_stiffness(self) -> float:
-        # derivative of incremental gravity term at theta=0
-        # k_eff = k_theta - m g l cos(theta_0)
+        """Return the negative net-torque slope at the configured theta=0 pose.
+
+        This is an equilibrium restoring stiffness only if net torque at that
+        pose is zero. For an offset geometric-spring pose with residual spring
+        torque, it is the local tangent stiffness around that reference.
+        """
         p = self
-        return p.k_theta - p.resonator_mass * p.gravity * p.lever_com_distance * math.cos(p.theta_neutral_world)
+        if p.use_geometric_springs:
+            radius = p.spring_shaft_radius
+            angle = p.theta_neutral_world
+            shaft_x = radius * math.sin(angle)
+            shaft_y = radius * math.cos(angle)
+            tangent_x = radius * math.cos(angle)
+            tangent_y = -radius * math.sin(angle)
+            curvature_x = -radius * math.sin(angle)
+            curvature_y = -radius * math.cos(angle)
+            spring_stiffness = 0.0
+            for anchor_x in (-p.spring_anchor_half_spacing, p.spring_anchor_half_spacing):
+                dx = shaft_x - anchor_x
+                dy = shaft_y - p.spring_anchor_y
+                length = math.hypot(dx, dy)
+                dot = dx * tangent_x + dy * tangent_y
+                length_rate_per_angle = dot / max(length, 1e-12)
+                length_accel_per_angle = (
+                    (tangent_x**2 + tangent_y**2 + dx * curvature_x + dy * curvature_y)
+                    / max(length, 1e-12)
+                    - dot**2 / max(length, 1e-12) ** 3
+                )
+                spring_stiffness += p.spring_k * (
+                    length_rate_per_angle**2
+                    + (length - p.spring_free_length) * length_accel_per_angle
+                )
+        else:
+            spring_stiffness = p.k_theta
+        gravity_slope = p.resonator_mass * p.gravity * p.lever_com_distance * math.cos(p.theta_neutral_world)
+        return spring_stiffness - gravity_slope
 
     @classmethod
     def from_dict(cls, d: Dict[str, float]) -> "PlantParams":
         allowed = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in allowed})
+
+
+@dataclass(frozen=True)
+class StepDirParams:
+    """Command, pulse-resolution, and mechanical tracking parameters.
+
+    Speeds use motor-shaft radians per second. ``step_angle_rad`` is the
+    commanded shaft rotation represented by one STEP pulse (full step divided
+    by the selected microstep factor).
+    """
+
+    step_angle_rad: float = math.radians(1.8) / 16.0
+    max_velocity_rad_s: float = 55.0
+    max_acceleration_rad_s2: float = 300.0
+    tracking_time_constant_s: float = 0.015
+    position_gain_nm_per_rad: float = 20.0
+    velocity_gain_nms_per_rad: float = 0.0015
+
+    def __post_init__(self) -> None:
+        values = (self.step_angle_rad, self.max_velocity_rad_s,
+                  self.max_acceleration_rad_s2, self.tracking_time_constant_s,
+                  self.position_gain_nm_per_rad, self.velocity_gain_nms_per_rad)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError('STEP/DIR parameters must be finite')
+        if any(value <= 0.0 for value in values):
+            raise ValueError('STEP/DIR resolution, limits, lag, and gains must be positive')
+
+
+class StepDirActuator:
+    """Bounded STEP/DIR pulse planner with a lagged, torque-limited rotor tracker.
+
+    ``command`` accepts a requested motor angular velocity and optional
+    acceleration limit. ``advance`` updates the bounded velocity trajectory,
+    quantizes its integrated position into integer pulse counts, then returns a
+    bounded motor torque command that tracks the pulse position in RigPlant.
+    This is a mechanical command model; it does not simulate phase current or
+    microstep current waveforms.
+    """
+
+    def __init__(self, params: Optional[StepDirParams] = None):
+        self.params = params or StepDirParams()
+        self.reset()
+
+    def reset(self, motor_position_rad: float = 0.0) -> None:
+        if not math.isfinite(motor_position_rad):
+            raise ValueError('Initial motor position must be finite')
+        self.requested_velocity_rad_s = 0.0
+        self.velocity_command_rad_s = 0.0
+        self.acceleration_limit_rad_s2 = self.params.max_acceleration_rad_s2
+        self.requested_acceleration_limit_rad_s2 = self.acceleration_limit_rad_s2
+        self.velocity_rad_s = 0.0
+        self.acceleration_rad_s2 = 0.0
+        self.position_rad = float(motor_position_rad)
+        self.step_count = int(round(self.position_rad / self.params.step_angle_rad))
+        self.position_rad = self.step_count * self.params.step_angle_rad
+        self.step_phase_rad = 0.0
+        self.velocity_saturated = False
+        self.acceleration_limit_saturated = False
+
+    def command(self, target_velocity_rad_s: float,
+                acceleration_limit_rad_s2: Optional[float] = None) -> Dict[str, object]:
+        if not math.isfinite(target_velocity_rad_s):
+            raise ValueError('STEP/DIR velocity command must be finite')
+        requested_accel = (self.params.max_acceleration_rad_s2 if acceleration_limit_rad_s2 is None
+                           else float(acceleration_limit_rad_s2))
+        if not math.isfinite(requested_accel) or requested_accel < 0.0:
+            raise ValueError('STEP/DIR acceleration limit must be finite and nonnegative')
+        self.requested_velocity_rad_s = float(target_velocity_rad_s)
+        self.velocity_command_rad_s = clamp(
+            self.requested_velocity_rad_s,
+            -self.params.max_velocity_rad_s,
+            self.params.max_velocity_rad_s,
+        )
+        self.requested_acceleration_limit_rad_s2 = requested_accel
+        self.acceleration_limit_rad_s2 = min(requested_accel, self.params.max_acceleration_rad_s2)
+        self.velocity_saturated = not math.isclose(
+            self.velocity_command_rad_s, self.requested_velocity_rad_s,
+            rel_tol=0.0, abs_tol=1e-12,
+        )
+        self.acceleration_limit_saturated = requested_accel > self.params.max_acceleration_rad_s2
+        return {
+            'requested_velocity_rad_s': self.requested_velocity_rad_s,
+            'velocity_command_rad_s': self.velocity_command_rad_s,
+            'requested_acceleration_limit_rad_s2': requested_accel,
+            'acceleration_limit_rad_s2': self.acceleration_limit_rad_s2,
+            'velocity_saturated': self.velocity_saturated,
+            'acceleration_limit_saturated': self.acceleration_limit_saturated,
+        }
+
+    def advance(self, dt: float, actual_phi_rad: float, actual_omega_rad_s: float,
+                torque_limit_nm: float) -> Dict[str, object]:
+        values = (dt, actual_phi_rad, actual_omega_rad_s, torque_limit_nm)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError('STEP/DIR update values must be finite')
+        if dt <= 0.0 or torque_limit_nm < 0.0:
+            raise ValueError('STEP/DIR timestep must be positive and torque limit nonnegative')
+
+        response = -math.expm1(-dt / self.params.tracking_time_constant_s)
+        lagged_delta = (self.velocity_command_rad_s - self.velocity_rad_s) * response
+        accel_delta_limit = self.acceleration_limit_rad_s2 * dt
+        applied_delta = clamp(lagged_delta, -accel_delta_limit, accel_delta_limit)
+        old_velocity = self.velocity_rad_s
+        self.velocity_rad_s = clamp(
+            old_velocity + applied_delta,
+            -self.params.max_velocity_rad_s,
+            self.params.max_velocity_rad_s,
+        )
+        self.acceleration_rad_s2 = (self.velocity_rad_s - old_velocity) / dt
+        dynamic_accel_limited = not math.isclose(
+            applied_delta, lagged_delta, rel_tol=0.0, abs_tol=1e-12,
+        )
+        self.acceleration_limit_saturated = self.acceleration_limit_saturated or dynamic_accel_limited
+
+        self.position_rad += self.velocity_rad_s * dt
+        previous_count = self.step_count
+        self.step_count = int(round(self.position_rad / self.params.step_angle_rad))
+        self.step_phase_rad = self.position_rad - self.step_count * self.params.step_angle_rad
+        step_delta = self.step_count - previous_count
+        step_position = self.step_count * self.params.step_angle_rad
+        direction = (1 if step_delta > 0 else -1 if step_delta < 0 else 0)
+
+        torque_request = (
+            self.params.position_gain_nm_per_rad * (step_position - actual_phi_rad)
+            + self.params.velocity_gain_nms_per_rad * (self.velocity_rad_s - actual_omega_rad_s)
+        )
+        torque_command = clamp(torque_request, -torque_limit_nm, torque_limit_nm)
+        return {
+            'requested_velocity_rad_s': self.requested_velocity_rad_s,
+            'velocity_command_rad_s': self.velocity_command_rad_s,
+            'step_velocity_rad_s': self.velocity_rad_s,
+            'step_acceleration_rad_s2': self.acceleration_rad_s2,
+            'velocity_tracking_error_rad_s': self.velocity_command_rad_s - self.velocity_rad_s,
+            'requested_acceleration_limit_rad_s2': self.requested_acceleration_limit_rad_s2,
+            'acceleration_limit_rad_s2': self.acceleration_limit_rad_s2,
+            'step_pulses': abs(int(step_delta)),
+            'step_delta': int(step_delta),
+            'step_count': int(self.step_count),
+            'direction': direction,
+            'step_position_rad': step_position,
+            'step_phase_rad': self.step_phase_rad,
+            'motor_tracking_error_rad': step_position - actual_phi_rad,
+            'torque_request_nm': torque_request,
+            'torque_command_nm': torque_command,
+            'velocity_saturated': self.velocity_saturated,
+            'acceleration_limit_saturated': self.acceleration_limit_saturated,
+            'torque_saturated': not math.isclose(torque_command, torque_request,
+                                                 rel_tol=0.0, abs_tol=1e-12),
+        }
 
 
 @dataclass
@@ -333,6 +522,100 @@ class RigPlant:
             return -p.stop_stiffness * (x + L) - p.stop_damping * min(v, 0.0)
         return 0.0
 
+    def spring_geometry(self, theta: float, theta_dot: float = 0.0) -> Dict[str, object]:
+        """Return the explicit two-spring geometry in OpenModelica coordinates.
+
+        The shaft point is ``(r*sin(alpha), r*cos(alpha))``, where
+        ``alpha = theta_neutral_world + theta``, and the two
+        carriage anchors are ``(-a, anchor_y)`` and ``(+a, anchor_y)``.
+        Springs act in tension or compression. For symmetric anchors their
+        torque is zero at the absolute-angle symmetry axes (alpha=0 or pi),
+        but a different theta_neutral_world does not make theta=0 a spring
+        equilibrium. Static gravity compensation remains a separate
+        incremental-gravity term used by the torsional model.
+        """
+        p = self.p
+        alpha = p.theta_neutral_world + theta
+        shaft_x = p.spring_shaft_radius * math.sin(alpha)
+        shaft_y = p.spring_shaft_radius * math.cos(alpha)
+        shaft_vx = p.spring_shaft_radius * math.cos(alpha) * theta_dot
+        shaft_vy = -p.spring_shaft_radius * math.sin(alpha) * theta_dot
+        lengths = []
+        length_rates = []
+        forces = []
+        torque = 0.0
+        potential = 0.0
+        for anchor_x in (-p.spring_anchor_half_spacing, p.spring_anchor_half_spacing):
+            dx = shaft_x - anchor_x
+            dy = shaft_y - p.spring_anchor_y
+            length = math.hypot(dx, dy)
+            safe_length = max(length, 1e-12)
+            length_rate = (dx * shaft_vx + dy * shaft_vy) / safe_length
+            magnitude = p.spring_k * (length - p.spring_free_length) + p.spring_d * length_rate
+            force_x = -magnitude * dx / safe_length
+            force_y = -magnitude * dy / safe_length
+            lengths.append(length)
+            length_rates.append(length_rate)
+            forces.append((force_x, force_y))
+            # theta grows from +y toward +x, so Q_theta = F dot d(position)/d(theta).
+            torque += force_x * p.spring_shaft_radius * math.cos(alpha)
+            torque -= force_y * p.spring_shaft_radius * math.sin(alpha)
+            potential += 0.5 * p.spring_k * (length - p.spring_free_length) ** 2
+        return {
+            'lengths': tuple(lengths),
+            'length_rates': tuple(length_rates),
+            'forces': tuple(forces),
+            'torque': float(torque),
+            'potential': float(potential),
+        }
+
+    def spring_torque(self, theta: float, theta_dot: float = 0.0) -> float:
+        """Return spring torque for the selected geometric or equivalent model."""
+        p = self.p
+        if p.use_geometric_springs:
+            return float(self.spring_geometry(theta, theta_dot)['torque'])
+        return -p.k_theta * theta - p.k_theta3 * theta**3 - p.c_theta * theta_dot
+
+    def spring_potential(self, theta: float) -> float:
+        """Return conservative spring potential, excluding spring damping."""
+        p = self.p
+        if p.use_geometric_springs:
+            return float(self.spring_geometry(theta)['potential'])
+        return 0.5 * p.k_theta * theta**2 + 0.25 * p.k_theta3 * theta**4
+
+    def total_mechanical_energy(self, y: np.ndarray) -> float:
+        """Return plant kinetic plus conservative mechanical potential energy.
+
+        The energy includes rotor and coupled carriage/resonator kinetic energy,
+        belt elasticity, the selected resonator spring potential, incremental
+        gravity, and soft-stop potential. It excludes actuator electrical
+        storage and dissipative terms, so conservation applies to unforced
+        trajectories with damping disabled and zero actuator torque.
+        """
+        p = self.p
+        state = np.asarray(y, dtype=float)
+        if state.shape != (7,) or not np.all(np.isfinite(state)):
+            raise ValueError('Mechanical energy requires a finite seven-state plant vector')
+        phi, wm, x, v, theta, omega, _ = map(float, state)
+        alpha = p.theta_neutral_world + theta
+        total_mass = p.carriage_mass + p.resonator_mass
+        coupling = p.resonator_mass * p.lever_com_distance * math.cos(alpha)
+        kinetic = (
+            0.5 * p.motor_inertia * wm**2
+            + 0.5 * total_mass * v**2
+            + coupling * v * omega
+            + 0.5 * p.resonator_inertia_pivot * omega**2
+        )
+        delta = p.pulley_radius * phi - x
+        belt_potential = 0.5 * p.belt_stiffness * delta**2 + 0.25 * p.belt_cubic * delta**4
+        gravity_potential = p.resonator_mass * p.gravity * p.lever_com_distance * (
+            math.cos(alpha) - math.cos(p.theta_neutral_world) + theta * math.sin(p.theta_neutral_world)
+        )
+        stop_excess = max(abs(x) - p.rail_half_travel, 0.0)
+        stop_potential = 0.5 * p.stop_stiffness * stop_excess**2
+        return float(kinetic + belt_potential + self.spring_potential(theta)
+                     + gravity_potential + stop_potential)
+
     def accelerations(
         self,
         y: np.ndarray,
@@ -378,10 +661,8 @@ class RigPlant:
         )
         rhs_theta = (
             external_torque
-            - p.c_theta * w
             - p.theta_coulomb * smooth_sign(w, p.theta_friction_eps)
-            - p.k_theta * th
-            - p.k_theta3 * th**3
+            + self.spring_torque(th, w)
             + gravity_increment
         )
 

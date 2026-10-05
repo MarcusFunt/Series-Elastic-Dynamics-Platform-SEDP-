@@ -75,7 +75,7 @@ Relative to the carriage pivot,
 \[
 r_s=
 \begin{bmatrix}
-r\sin\theta\\r\cos\theta
+r\sin\alpha\\r\cos\alpha
 \end{bmatrix},
 \quad
 a_L=[-a,h]^T,
@@ -97,13 +97,29 @@ f_i=k_s(L_i-L_0)+c_s\dot L_i,
 F_i=-f_i\frac{d_i}{L_i}.
 \]
 
-The pivot torque is
+Positive theta moves the shaft point from +y toward +x, so the generalized
+spring torque is the force projected onto the coordinate derivative:
 
 \[
-\tau_s=r_s\times(F_L+F_R).
+\tau_s=(F_L+F_R)\cdot\frac{\partial r_s}{\partial\theta}.
 \]
 
-This exact geometric model is implemented in OpenModelica. The fast Python control/RL plant currently uses an equivalent rotational law.
+Spring torque is the negative derivative of spring potential. With symmetric
+anchors, spring torque is zero and reflection symmetry holds when the shaft's
+absolute angle is `alpha=0` or `alpha=pi`. A nonzero `theta_neutral` is only the
+reference used by the incremental gravity term; it does not guarantee that
+`theta=0` is an equilibrium of the geometric spring pair. The equilibrium and
+whether it is restoring must be determined from net torque and the local
+curvature of the combined spring and gravity potential. The current OpenModelica
+geometry values are placeholders and produce negative effective stiffness at
+the upright pose.
+
+The spring geometry, free lengths, and rates have not been calibrated against
+measurements from the physical rig. Therefore the equivalent torsion model is
+not claimed to be parameter-equivalent to the geometric model.
+The fast Python control/RL plant keeps its equivalent rotational law as the
+default and exposes the geometric model as an opt-in mode. See
+[plant physics validation](control/PHYSICS_VALIDATION.md) for the comparison.
 
 ## Sensors
 

@@ -34,6 +34,11 @@ Relative to the moving carriage pivot:
 - right anchor: `(+anchorHalfSpacing, anchorY)`
 
 Each spring gets an exact instantaneous length and rate. The force vectors are resolved into torque about the pivot.
+With `x = rSpring*sin(theta)` and `y = rSpring*cos(theta)`, the generalized
+torque is `F dot d(position)/d(theta)`. This sign makes spring torque the
+negative derivative of spring potential. The current spring dimensions and
+rates are placeholders; see [the physics validation report](../docs/control/PHYSICS_VALIDATION.md)
+before interpreting the geometric model's stability.
 
 ## Run
 

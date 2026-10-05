@@ -1,0 +1,460 @@
+{
+  "spring_model_comparison": {
+    "geometry_parameters": {
+      "anchor_half_spacing_m": 0.035,
+      "anchor_y_m": -0.015,
+      "shaft_radius_m": 0.04,
+      "stiffness_n_per_m": 500.0,
+      "damping_ns_per_m": 1.0,
+      "free_length_m": 0.01,
+      "values_are_openmodelica_placeholders": true
+    },
+    "geometric_small_angle_stiffness_nm_per_rad": -0.5490569600140404,
+    "equivalent_small_angle_stiffness_nm_per_rad": 0.308166,
+    "torque_comparison": [
+      {
+        "angle_deg": -15.0,
+        "geometric_torque_nm": -0.11279936833807908,
+        "equivalent_torque_nm": 0.10995574287564275,
+        "difference_nm": -0.22275511121372182
+      },
+      {
+        "angle_deg": -10.0,
+        "geometric_torque_nm": -0.0758153718983832,
+        "equivalent_torque_nm": 0.07330382858376183,
+        "difference_nm": -0.14911920048214503
+      },
+      {
+        "angle_deg": -5.0,
+        "geometric_torque_nm": -0.038093022373500374,
+        "equivalent_torque_nm": 0.036651914291880916,
+        "difference_nm": -0.07474493666538129
+      },
+      {
+        "angle_deg": 0.0,
+        "geometric_torque_nm": 0.0,
+        "equivalent_torque_nm": -0.0,
+        "difference_nm": 0.0
+      },
+      {
+        "angle_deg": 5.0,
+        "geometric_torque_nm": 0.03809302237350046,
+        "equivalent_torque_nm": -0.036651914291880916,
+        "difference_nm": 0.07474493666538137
+      },
+      {
+        "angle_deg": 10.0,
+        "geometric_torque_nm": 0.07581537189838314,
+        "equivalent_torque_nm": -0.07330382858376183,
+        "difference_nm": 0.14911920048214497
+      },
+      {
+        "angle_deg": 15.0,
+        "geometric_torque_nm": 0.11279936833807916,
+        "equivalent_torque_nm": -0.10995574287564275,
+        "difference_nm": 0.2227551112137219
+      }
+    ]
+  },
+  "timestep_convergence": {
+    "duration_s": 0.12,
+    "reference_dt_s": 0.000125,
+    "normalized_state_scales": {
+      "motor_angle_rad": 0.05,
+      "motor_speed_rad_s": 20.0,
+      "carriage_x_m": 0.01,
+      "carriage_speed_m_s": 0.5,
+      "theta_rad": 0.1,
+      "theta_speed_rad_s": 2.0,
+      "actuator_torque_nm": 0.48
+    },
+    "acceptance_limits": {
+      "max_normalized_state_error_rms": 0.0001,
+      "max_relative_energy_drift_free_case": 0.0001
+    },
+    "models": {
+      "equivalent_torsion": {
+        "spring_mode": "equivalent_torsion",
+        "plant_parameters": {
+          "carriage_mass": 0.45,
+          "resonator_mass": 0.12,
+          "lever_com_distance": 0.095,
+          "lever_inertia_com": 0.00018,
+          "theta_neutral_world": 0.0,
+          "k_theta": 0.42,
+          "k_theta3": 0.0,
+          "c_theta": 0.0,
+          "use_geometric_springs": false,
+          "spring_anchor_half_spacing": 0.035,
+          "spring_anchor_y": -0.015,
+          "spring_shaft_radius": 0.04,
+          "spring_k": 500.0,
+          "spring_d": 0.0,
+          "spring_free_length": 0.01,
+          "theta_coulomb": 0.0,
+          "theta_friction_eps": 0.05,
+          "b_x": 0.0,
+          "x_coulomb": 0.0,
+          "x_friction_eps": 0.015,
+          "motor_inertia": 5e-05,
+          "motor_viscous": 0.0,
+          "motor_coulomb": 0.0,
+          "motor_friction_eps": 0.5,
+          "pulley_teeth": 20,
+          "belt_pitch": 0.002,
+          "belt_stiffness": 6500.0,
+          "belt_damping": 0.0,
+          "belt_cubic": 0.0,
+          "motor_hold_torque": 0.48,
+          "motor_omega_corner": 55.0,
+          "motor_torque_time_constant": 0.0015,
+          "rail_half_travel": 0.065,
+          "stop_stiffness": 18000.0,
+          "stop_damping": 120.0,
+          "gravity": 9.81,
+          "imu_radius": 0.075,
+          "gyro_bias": 0.0013962634015954637,
+          "gyro_noise_std": 0.0005235987755982988,
+          "accel_noise_std": 0.015
+        },
+        "parameter_overrides": {
+          "b_x": 0.0,
+          "x_coulomb": 0.0,
+          "motor_viscous": 0.0,
+          "motor_coulomb": 0.0,
+          "belt_damping": 0.0,
+          "c_theta": 0.0,
+          "spring_d": 0.0,
+          "theta_coulomb": 0.0
+        },
+        "initial_state": {
+          "motor_angle_rad": 0.015,
+          "motor_speed_rad_s": 0.08,
+          "carriage_x_m": 0.002,
+          "carriage_speed_m_s": 0.025,
+          "theta_rad": 0.02,
+          "theta_speed_rad_s": -0.04,
+          "actuator_torque_nm": 0.0
+        },
+        "inputs": {
+          "free_actuator_torque_nm": 0.0,
+          "driven_actuator_torque_nm": 0.08
+        },
+        "validated_max_physics_dt_s": 0.001,
+        "scenarios": {
+          "free": {
+            "steps": [
+              {
+                "physics_dt_s": 0.004,
+                "max_normalized_state_error_rms": 0.0071569636888962115,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 0.00038557556613677546,
+                  "motor_speed_rad_s": 0.13812322002234811,
+                  "carriage_x_m": 6.476615755534069e-06,
+                  "carriage_speed_m_s": 0.0023287757755094673,
+                  "theta_rad": 5.818258351601019e-05,
+                  "theta_speed_rad_s": 0.021278749070854586,
+                  "actuator_torque_nm": 0.0
+                },
+                "max_relative_energy_drift": 0.011367965838438576
+              },
+              {
+                "physics_dt_s": 0.002,
+                "max_normalized_state_error_rms": 0.0004437558716310965,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 3.818509622810495e-05,
+                  "motor_speed_rad_s": 0.007650171563610364,
+                  "carriage_x_m": 6.427346553180505e-07,
+                  "carriage_speed_m_s": 0.00012898742330910706,
+                  "theta_rad": 5.828972033300461e-06,
+                  "theta_speed_rad_s": 0.0011787690274653873,
+                  "actuator_torque_nm": 0.0
+                },
+                "max_relative_energy_drift": 0.0003679099200209673
+              },
+              {
+                "physics_dt_s": 0.001,
+                "max_normalized_state_error_rms": 2.7597602682553464e-05,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 2.7698683778276667e-06,
+                  "motor_speed_rad_s": 0.00043689843907745995,
+                  "carriage_x_m": 4.664998846102327e-08,
+                  "carriage_speed_m_s": 7.366594474339516e-06,
+                  "theta_rad": 4.241977572009767e-07,
+                  "theta_speed_rad_s": 6.732708309775681e-05,
+                  "actuator_torque_nm": 0.0
+                },
+                "max_relative_energy_drift": 1.1583615314472703e-05
+              },
+              {
+                "physics_dt_s": 0.0005,
+                "max_normalized_state_error_rms": 1.7134286327811216e-06,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 1.835068690336783e-07,
+                  "motor_speed_rad_s": 2.578789845930629e-05,
+                  "carriage_x_m": 3.0913630471663192e-09,
+                  "carriage_speed_m_s": 4.348186475600091e-07,
+                  "theta_rad": 2.814129325314635e-08,
+                  "theta_speed_rad_s": 3.974255232686019e-06,
+                  "actuator_torque_nm": 0.0
+                },
+                "max_relative_energy_drift": 3.6268637786802635e-07
+              }
+            ]
+          },
+          "driven": {
+            "steps": [
+              {
+                "physics_dt_s": 0.004,
+                "max_normalized_state_error_rms": 0.06264312238282915,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 0.00040622011350777143,
+                  "motor_speed_rad_s": 0.18846817587932208,
+                  "carriage_x_m": 7.025357861074888e-06,
+                  "carriage_speed_m_s": 0.002929058765528181,
+                  "theta_rad": 6.338973028280348e-05,
+                  "theta_speed_rad_s": 0.025662424874076883,
+                  "actuator_torque_nm": 0.00036289661433076825
+                },
+                "max_relative_energy_drift": null
+              },
+              {
+                "physics_dt_s": 0.002,
+                "max_normalized_state_error_rms": 0.0023380824796226025,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 4.492534162103823e-05,
+                  "motor_speed_rad_s": 0.009998141127084637,
+                  "carriage_x_m": 7.410020409354123e-07,
+                  "carriage_speed_m_s": 0.0001647551320211882,
+                  "theta_rad": 6.441789093203365e-06,
+                  "theta_speed_rad_s": 0.001442602508281432,
+                  "actuator_torque_nm": 8.326672684688674e-17
+                },
+                "max_relative_energy_drift": null
+              },
+              {
+                "physics_dt_s": 0.001,
+                "max_normalized_state_error_rms": 8.28643901224975e-05,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 3.3198893252261996e-06,
+                  "motor_speed_rad_s": 0.0005765132374619952,
+                  "carriage_x_m": 5.464492097706497e-08,
+                  "carriage_speed_m_s": 9.494523662612053e-06,
+                  "theta_rad": 4.703213830614672e-07,
+                  "theta_speed_rad_s": 8.309445238374735e-05,
+                  "actuator_torque_nm": 8.326672684688674e-17
+                },
+                "max_relative_energy_drift": null
+              },
+              {
+                "physics_dt_s": 0.0005,
+                "max_normalized_state_error_rms": 4.077245456747713e-06,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 2.2158646295622475e-07,
+                  "motor_speed_rad_s": 3.4217180910900424e-05,
+                  "carriage_x_m": 3.6442511855416804e-09,
+                  "carriage_speed_m_s": 5.633278887806625e-07,
+                  "theta_rad": 3.1238923059451196e-08,
+                  "theta_speed_rad_s": 4.928697607375909e-06,
+                  "actuator_torque_nm": 6.938893903907228e-17
+                },
+                "max_relative_energy_drift": null
+              }
+            ]
+          }
+        }
+      },
+      "two_spring_geometry": {
+        "spring_mode": "explicit_two_spring_geometry",
+        "plant_parameters": {
+          "carriage_mass": 0.45,
+          "resonator_mass": 0.12,
+          "lever_com_distance": 0.095,
+          "lever_inertia_com": 0.00018,
+          "theta_neutral_world": 0.0,
+          "k_theta": 0.42,
+          "k_theta3": 0.0,
+          "c_theta": 0.0,
+          "use_geometric_springs": true,
+          "spring_anchor_half_spacing": 0.035,
+          "spring_anchor_y": -0.015,
+          "spring_shaft_radius": 0.04,
+          "spring_k": 500.0,
+          "spring_d": 0.0,
+          "spring_free_length": 0.01,
+          "theta_coulomb": 0.0,
+          "theta_friction_eps": 0.05,
+          "b_x": 0.0,
+          "x_coulomb": 0.0,
+          "x_friction_eps": 0.015,
+          "motor_inertia": 5e-05,
+          "motor_viscous": 0.0,
+          "motor_coulomb": 0.0,
+          "motor_friction_eps": 0.5,
+          "pulley_teeth": 20,
+          "belt_pitch": 0.002,
+          "belt_stiffness": 6500.0,
+          "belt_damping": 0.0,
+          "belt_cubic": 0.0,
+          "motor_hold_torque": 0.48,
+          "motor_omega_corner": 55.0,
+          "motor_torque_time_constant": 0.0015,
+          "rail_half_travel": 0.065,
+          "stop_stiffness": 18000.0,
+          "stop_damping": 120.0,
+          "gravity": 9.81,
+          "imu_radius": 0.075,
+          "gyro_bias": 0.0013962634015954637,
+          "gyro_noise_std": 0.0005235987755982988,
+          "accel_noise_std": 0.015
+        },
+        "parameter_overrides": {
+          "b_x": 0.0,
+          "x_coulomb": 0.0,
+          "motor_viscous": 0.0,
+          "motor_coulomb": 0.0,
+          "belt_damping": 0.0,
+          "c_theta": 0.0,
+          "spring_d": 0.0,
+          "theta_coulomb": 0.0
+        },
+        "initial_state": {
+          "motor_angle_rad": 0.015,
+          "motor_speed_rad_s": 0.08,
+          "carriage_x_m": 0.002,
+          "carriage_speed_m_s": 0.025,
+          "theta_rad": 0.02,
+          "theta_speed_rad_s": -0.04,
+          "actuator_torque_nm": 0.0
+        },
+        "inputs": {
+          "free_actuator_torque_nm": 0.0,
+          "driven_actuator_torque_nm": 0.08
+        },
+        "validated_max_physics_dt_s": 0.001,
+        "scenarios": {
+          "free": {
+            "steps": [
+              {
+                "physics_dt_s": 0.004,
+                "max_normalized_state_error_rms": 0.0072169928622546585,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 0.0003368682832572273,
+                  "motor_speed_rad_s": 0.14122714988259766,
+                  "carriage_x_m": 5.3864311248078564e-06,
+                  "carriage_speed_m_s": 0.002327586263381018,
+                  "theta_rad": 3.8394570065602984e-05,
+                  "theta_speed_rad_s": 0.019782142361270516,
+                  "actuator_torque_nm": 0.0
+                },
+                "max_relative_energy_drift": 8.891289767718366e-05
+              },
+              {
+                "physics_dt_s": 0.002,
+                "max_normalized_state_error_rms": 0.000447578465366569,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 3.5481771035461573e-05,
+                  "motor_speed_rad_s": 0.007955630510407374,
+                  "carriage_x_m": 5.779869183138685e-07,
+                  "carriage_speed_m_s": 0.000131199797334558,
+                  "theta_rad": 4.596992300154312e-06,
+                  "theta_speed_rad_s": 0.0011213002971164343,
+                  "actuator_torque_nm": 0.0
+                },
+                "max_relative_energy_drift": 2.8699373999703936e-06
+              },
+              {
+                "physics_dt_s": 0.001,
+                "max_normalized_state_error_rms": 2.7804109657339453e-05,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 2.61553124418501e-06,
+                  "motor_speed_rad_s": 0.00045910367957624487,
+                  "carriage_x_m": 4.280794378697106e-08,
+                  "carriage_speed_m_s": 7.574280057015548e-06,
+                  "theta_rad": 3.493420060451946e-07,
+                  "theta_speed_rad_s": 6.495656807103956e-05,
+                  "actuator_torque_nm": 0.0
+                },
+                "max_relative_energy_drift": 8.994938626090172e-08
+              },
+              {
+                "physics_dt_s": 0.0005,
+                "max_normalized_state_error_rms": 1.7261282290863217e-06,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 1.7440246130595582e-07,
+                  "motor_speed_rad_s": 2.7261350595608747e-05,
+                  "carriage_x_m": 2.8598010083083145e-09,
+                  "carriage_speed_m_s": 4.4985993838397853e-07,
+                  "theta_rad": 2.357352646420452e-08,
+                  "theta_speed_rad_s": 3.8655591332315e-06,
+                  "actuator_torque_nm": 0.0
+                },
+                "max_relative_energy_drift": 2.7911151786817134e-09
+              }
+            ]
+          },
+          "driven": {
+            "steps": [
+              {
+                "physics_dt_s": 0.004,
+                "max_normalized_state_error_rms": 0.06264291553591846,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 0.00035326489704168296,
+                  "motor_speed_rad_s": 0.1914267117518591,
+                  "carriage_x_m": 5.822439548143488e-06,
+                  "carriage_speed_m_s": 0.00289345337371838,
+                  "theta_rad": 4.064916547863451e-05,
+                  "theta_speed_rad_s": 0.023417968712065473,
+                  "actuator_torque_nm": 0.00036289661433076825
+                },
+                "max_relative_energy_drift": null
+              },
+              {
+                "physics_dt_s": 0.002,
+                "max_normalized_state_error_rms": 0.002338075746800145,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 4.205794569500654e-05,
+                  "motor_speed_rad_s": 0.010307634543806898,
+                  "carriage_x_m": 6.669048146848433e-07,
+                  "carriage_speed_m_s": 0.0001649382106136965,
+                  "theta_rad": 4.914177383019691e-06,
+                  "theta_speed_rad_s": 0.001343558129901723,
+                  "actuator_torque_nm": 8.326672684688674e-17
+                },
+                "max_relative_energy_drift": null
+              },
+              {
+                "physics_dt_s": 0.001,
+                "max_normalized_state_error_rms": 8.286400161909093e-05,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 3.158538993019988e-06,
+                  "motor_speed_rad_s": 0.0005993803017361188,
+                  "carriage_x_m": 5.015709792638434e-08,
+                  "carriage_speed_m_s": 9.581997545637932e-06,
+                  "theta_rad": 3.7391690038690584e-07,
+                  "theta_speed_rad_s": 7.833620870911773e-05,
+                  "actuator_torque_nm": 8.326672684688674e-17
+                },
+                "max_relative_energy_drift": null
+              },
+              {
+                "physics_dt_s": 0.0005,
+                "max_normalized_state_error_rms": 4.077227165417863e-06,
+                "final_absolute_state_error": {
+                  "motor_angle_rad": 2.1214622236698233e-07,
+                  "motor_speed_rad_s": 3.5744463303899465e-05,
+                  "carriage_x_m": 3.3707381677516857e-09,
+                  "carriage_speed_m_s": 5.711256618745608e-07,
+                  "theta_rad": 2.524047887364489e-08,
+                  "theta_speed_rad_s": 4.6784823606316195e-06,
+                  "actuator_torque_nm": 6.938893903907228e-17
+                },
+                "max_relative_energy_drift": null
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

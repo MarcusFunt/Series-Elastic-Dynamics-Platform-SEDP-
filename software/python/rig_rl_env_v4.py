@@ -3,11 +3,12 @@
 Evaluation and training both call this transition. Reward/metrics alone use
 true state. Parameters available to controller/observer remain nominal.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import numpy as np
 from rig_rl_env_v3 import RLEnvConfigV3, RigRLEnvV3
 from residual_control_v4 import ResidualControlLoop, FRAME_SIGNS
+from timing_models import normalize_sensor_timing
 
 
 @dataclass
@@ -15,6 +16,7 @@ class RLEnvConfigV4(RLEnvConfigV3):
     history_length: int = 8
     sensor_noise: bool = True
     linear_encoder: bool = False
+    sensor_timing: dict = field(default_factory=dict)
     oracle_state: bool = False
     observation_noise_std: float = 0.
     reward_scale: float = .02
@@ -24,6 +26,8 @@ class RLEnvConfigV4(RLEnvConfigV3):
         if self.history_length < 1: raise ValueError('history_length must be positive')
         if self.reward_scale<=0: raise ValueError('reward_scale must be positive')
         if self.residual_accel_limit <= 0: raise ValueError('residual_accel_limit must be positive')
+        self.sensor_timing=normalize_sensor_timing(
+            self.sensor_timing,self.control_dt,self.linear_encoder,self.physics_dt)
 
 
 class RigRLEnvV4(RigRLEnvV3):
@@ -42,6 +46,10 @@ class RigRLEnvV4(RigRLEnvV3):
         self._current_obs=self.loop.observe(self.y,self.t,self.reference,initial=True)
         return self._current_obs
 
+    def _after_physics_step(self):
+        if self.loop is not None:
+            self.loop.sensor_tick(self.y,self.t)
+
     def set_reference(self, reference):
         """Change announced motion without assimilating a duplicate measurement."""
         self.reference=reference
@@ -54,20 +62,44 @@ class RigRLEnvV4(RigRLEnvV3):
         ref=self.reference.sample(self.t)
         torque=self.loop.command(action,ref)
         command=self.loop.last_command
+        timing=self.command_queue.issue(command['total_accel'],self.t)
+        applied_accel=self.loop.controller.project_accel(
+            self.loop.state,timing['command_applied'])
+        command_saturated=not math.isclose(
+            applied_accel,timing['command_applied'],rel_tol=0.0,abs_tol=1e-12)
+        if self.cfg.command_delay == 0.0 and self.cfg.command_jitter == 0.0:
+            applied_torque=command['tau_cmd']
+        else:
+            applied_torque=self.loop.controller.torque_from_accel(
+                self.loop.state,applied_accel)
         self.last_base_accel=command['base_accel'];self.last_residual=command['requested_residual_accel']
-        self.last_effective_residual=command['effective_residual_accel'];self.last_u=torque
+        self.last_effective_residual=applied_accel-command['base_accel'];self.last_u=applied_torque
+        self.loop.previous_effective_action=self.last_effective_residual/max(
+            self.cfg.residual_accel_limit,1e-9)
         interval_peak_rail=0.;interval_saturation=False
-        for _ in range(self.cfg.substeps):
-            ext=self.kick_torque if self.kick_at>=0 and self.kick_at<=self.t<self.kick_at+self.kick_duration else 0.
-            self.y=self.plant.rk4(self.y,torque,self.cfg.physics_dt,external_torque=ext)
-            self.t+=self.cfg.physics_dt
-            interval_peak_rail=max(interval_peak_rail,abs(self.y[2])/self.p.rail_half_travel)
-            interval_saturation=interval_saturation or abs(torque)>=.995*self.plant.motor_torque_limit(self.y[1])
-        self.loop.predict(torque)
+        if self.cfg.actuator_mode == 'torque':
+            for _ in range(self.cfg.substeps):
+                ext=self.kick_torque if self.kick_at>=0 and self.kick_at<=self.t<self.kick_at+self.kick_duration else 0.
+                self.y=self.plant.rk4(self.y,applied_torque,self.cfg.physics_dt,external_torque=ext)
+                self.t+=self.cfg.physics_dt
+                self._after_physics_step()
+                interval_peak_rail=max(interval_peak_rail,abs(self.y[2])/self.p.rail_half_travel)
+                interval_saturation=interval_saturation or abs(applied_torque)>=.995*self.plant.motor_torque_limit(self.y[1])
+        else:
+            applied_torque,actuator_diagnostics=self._step_dir_interval(applied_accel)
+            self.last_u=applied_torque
+            interval_peak_rail=float(actuator_diagnostics['interval_peak_rail_fraction'])
+            interval_saturation=bool(
+                command_saturated or actuator_diagnostics['torque_saturated']
+                or actuator_diagnostics['velocity_saturated']
+                or actuator_diagnostics['acceleration_limit_saturated']
+            )
+        interval_saturation=interval_saturation or command_saturated
+        self.loop.predict(applied_torque)
         self.steps+=1
         ref=self.reference.sample(self.t)
         effective=self.loop.previous_effective_action
-        reward,costs,pred,progress=self._reward(effective,ref,command['base_accel'],command['effective_residual_accel'])
+        reward,costs,pred,progress=self._reward(effective,ref,command['base_accel'],self.last_effective_residual)
         self.prev_energy=self._energy_norm();self.prev_action=effective
         term=bool(interval_peak_rail>self.cfg.terminate_rail_fraction or
                   abs(self.y[4])>self.cfg.terminate_theta or not np.all(np.isfinite(self.y)))
@@ -76,12 +108,23 @@ class RigRLEnvV4(RigRLEnvV3):
         self._current_obs=self.loop.observe(self.y,self.t,self.reference)
         info=self._info(ref,reward,costs)
         info.update(command)
+        info.update(timing)
+        info['command_applied']=applied_accel
+        info['command_saturated']=command_saturated
+        info['sensor_packets']=tuple(dict(packet) for packet in self.loop.last_measurement_packets)
+        info['sensor_messages_received']=self.loop.sensor_messages_received
+        info['sensor_messages_processed']=self.loop.sensor_messages_processed
+        info['sensor_delayed_measurements_processed']=self.loop.delayed_measurements_processed
+        info['sensor_dropout_counts']=(dict(self.loop.sensor_suite.dropout_count)
+                                       if self.loop.sensor_suite is not None else {})
         info['interval_peak_rail_fraction']=interval_peak_rail
         info['interval_saturation']=interval_saturation
         info.update({'requested_action':action,'energy_progress_reward':progress,
                      'estimator_position_error':float(self.loop.estimator.state[2]-self.y[2]),
                      'estimator_angle_error':float(self.loop.estimator.state[4]-self.y[4]),
                      'estimator_innovation':self.loop.estimator.innovation_norm})
+        info.update(self.last_actuator_diagnostics)
+        info['tau_cmd']=self.last_u
         info['unscaled_reward']=reward
         return self._current_obs,reward*self.cfg.reward_scale,term,trunc,info
 
