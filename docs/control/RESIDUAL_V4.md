@@ -65,10 +65,12 @@ rollouts when Numba is installed; the existing NumPy RK4 path remains available
 as a fallback. It re-linearizes the full seven-state held-torque transition at
 each sample by default, then solves the condensed convex quadratic objective
 with OSQP when the horizon is at least 10 samples and SciPy SLSQP for shorter
-horizons. The default horizon is 8 samples (0.08 seconds), selected to keep
-measured action latency below 10 ms while retaining exact per-sample
-linearization. Longer horizons remain configurable and are useful for offline
-experiments, but their action latency can exceed 10 ms. Numba compilation is
+horizons. The default horizon is 8 samples (0.08 seconds). This setting targets
+the 10 ms control period; it does not establish that action latency meets that
+period. The checked-in Phase 4 latency measurements describe the implementation
+before the later CPU optimization. No post-optimization latency measurement is
+currently recorded, so the current default's latency remains unverified. Longer
+horizons remain configurable for offline experiments. Numba compilation is
 paid once during controller construction, before action timing begins.
 
 Constraints cover rail travel, carriage/motor speed, acceleration, residual
@@ -77,10 +79,14 @@ also obeys the shared rail acceleration bounds. A nonlinear horizon rollout
 checks rail/speed/torque and residual feasibility. Solver or rollout failure
 returns zero residual; shared LQR and rail projection remain active.
 
-This is a local-model reference, not a global nonlinear optimum or a hardware
-safety guarantee. It is currently too slow and falls back too frequently to
-recommend as the deployed 100 Hz controller. Timing/fallback rates are included
-in results rather than hidden behind successful LQR behavior.
+The nonlinear acceptance rollout checks rail and speed limits at each physics
+substep. Configured time limits are checked during model construction,
+linearization, solver work, and nonlinear rollout; an in-flight native solver
+or kernel operation may finish after the deadline before the timeout fallback
+is returned. This is a local-model reference, not a global nonlinear optimum
+or a hardware safety guarantee. Treat it as a simulation and teacher tool until
+a post-optimization benchmark records latency and fallback rates on the
+intended target.
 
 Teacher runs save observations, action labels, episode IDs, solver success,
 solver diagnostics and configuration. Fallback labels are excluded. Fitting

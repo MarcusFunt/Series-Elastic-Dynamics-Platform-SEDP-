@@ -46,7 +46,11 @@ The locally linearized MPC is currently a weak reference for aggressive reversal
 | random_reference (202) | 36.5% | 30.0 ms | 83.1 ms |
 | random_reference (303) | 39.7% | 30.3 ms | 79.7 ms |
 
-These timings exceed the 10 ms controller period on this execution machine. The simulation is offline and does not inject missed-deadline delay; the measurements do not establish real-time feasibility on the user’s PC or RP2350.
+These pre-optimization timings exceed the 10 ms controller period on this
+execution machine. They do not measure the later CPU-optimized implementation;
+current default latency relative to the controller period remains unverified.
+The simulation is offline and does not inject missed-deadline delay, so these
+measurements do not establish real-time feasibility on the user’s PC or RP2350.
 
 ## Decision
 

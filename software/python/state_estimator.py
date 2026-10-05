@@ -46,6 +46,14 @@ def held_transition_batch(plant, states, torque, physics_dt, control_dt):
     return y
 
 
+def scheduled_transition_batch(plant, states, torque_trace, physics_dt):
+    """Advance perturbed states through a per-physics-step torque schedule."""
+    y = np.asarray(states, dtype=float).copy()
+    for torque in torque_trace:
+        y = plant.rk4_batch(y, float(torque), physics_dt)
+    return y
+
+
 def numerical_jacobian(function, point):
     point = np.asarray(point, dtype=float)
     columns = []
@@ -60,8 +68,9 @@ class StateEstimator:
     """EKF with a bounded command history for delayed measurements.
 
     Delayed packets are inserted at acquisition time and the filter is replayed
-    from a saved checkpoint. Sensor sample times are control-tick aligned by the
-    timing model; the command history therefore has one transition per tick.
+    from a saved checkpoint. Sensor sample times are physics-tick aligned by the
+    timing model; each controller transition stores its per-physics-step torque
+    trace for accurate replay, including STEP/DIR actuator output.
     """
     def __init__(self, params, physics_dt=.001, control_dt=.01, linear_encoder=False,
                  history_horizon=0.0):
@@ -95,9 +104,21 @@ class StateEstimator:
         return self.mean[:7].copy()
 
     def _propagate(self, torque, dt):
-        # Preserve the historical one-step covariance and trajectory path when
-        # called at control_dt, while allowing stored transitions to replay.
+        # Preserve the held-torque path when the supplied schedule is constant;
+        # replay can supply a changing per-physics-step torque trace.
         old_mean, old_covariance = self.mean.copy(), self.covariance.copy()
+        substeps = round(dt / self.physics_dt)
+        torques = np.asarray(torque, dtype=float)
+        if torques.ndim == 0:
+            trace = None
+            held_torque = float(torques)
+        elif torques.ndim == 1 and torques.shape == (substeps,):
+            if not np.all(np.isfinite(torques)):
+                raise ValueError('torque trace must contain only finite values')
+            trace = torques
+            held_torque = float(trace[0]) if len(trace) and np.all(trace == trace[0]) else None
+        else:
+            raise ValueError('torque input must be scalar or have one value per physics substep')
         perturbations = np.repeat(old_mean[None, :7], 15, axis=0)
         epsilons = []
         for index in range(7):
@@ -105,9 +126,14 @@ class StateEstimator:
             epsilons.append(eps)
             perturbations[1 + 2*index, index] += eps
             perturbations[2 + 2*index, index] -= eps
-        propagated = held_transition_batch(
-            self.plant, perturbations, torque, self.physics_dt, dt
-        )
+        if held_torque is not None:
+            propagated = held_transition_batch(
+                self.plant, perturbations, held_torque, self.physics_dt, dt
+            )
+        else:
+            propagated = scheduled_transition_batch(
+                self.plant, perturbations, trace, self.physics_dt
+            )
         F = np.zeros((8, 8), dtype=float)
         F[7, 7] = 1.0
         for index, eps in enumerate(epsilons):
@@ -120,9 +146,19 @@ class StateEstimator:
     def predict(self, torque):
         start = self.time
         end = start + self.control_dt
-        self._propagate(float(torque), self.control_dt)
+        substeps = round(self.control_dt / self.physics_dt)
+        values = np.asarray(torque, dtype=float)
+        if values.ndim == 0:
+            torque_trace = np.full(substeps, float(values), dtype=float)
+        elif values.ndim == 1 and values.shape == (substeps,):
+            if not np.all(np.isfinite(values)):
+                raise ValueError('torque trace must contain only finite values')
+            torque_trace = values.copy()
+        else:
+            raise ValueError('predict expects one torque value or one per physics substep')
+        self._propagate(torque_trace, self.control_dt)
         self.time = end
-        self._steps.append({'start': start, 'end': end, 'torque': float(torque)})
+        self._steps.append({'start': start, 'end': end, 'torque_trace': torque_trace})
         self._checkpoints[self._time_key(end)] = (self.mean.copy(), self.covariance.copy())
         self._prune_history()
 
@@ -177,19 +213,25 @@ class StateEstimator:
             if step['end'] <= self.time + 1e-12:
                 continue
             # Measurements may be acquired between controller ticks. Split the
-            # held-input transition at each acquisition tick during replay.
+            # recorded physics-step input trace at each acquisition tick.
+            trace = step['torque_trace']
+            trace_index = max(0, round((self.time - step['start']) / self.physics_dt))
             event_times = sorted(float(key) for key in events_by_time
                                  if self.time + 1e-12 < float(key) <= step['end'] + 1e-12)
             for event_time in event_times:
                 if event_time > self.time + 1e-12:
-                    self._propagate(step['torque'], event_time - self.time)
+                    event_index = round((event_time - step['start']) / self.physics_dt)
+                    segment = trace[trace_index:event_index]
+                    self._propagate(segment, len(segment) * self.physics_dt)
+                    trace_index = event_index
                     self.time = event_time
                 for measurement in events_by_time[self._time_key(event_time)]:
                     self._apply_measurement(measurement)
                 self._checkpoints[self._time_key(self.time)] = (
                     self.mean.copy(), self.covariance.copy())
             if step['end'] > self.time + 1e-12:
-                self._propagate(step['torque'], step['end'] - self.time)
+                segment = trace[trace_index:]
+                self._propagate(segment, len(segment) * self.physics_dt)
                 self.time = step['end']
             self._checkpoints[self._time_key(self.time)] = (self.mean.copy(), self.covariance.copy())
 

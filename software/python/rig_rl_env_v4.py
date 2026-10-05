@@ -96,7 +96,9 @@ class RigRLEnvV4(RigRLEnvV3):
                 or actuator_diagnostics['acceleration_limit_saturated']
             )
         interval_saturation=interval_saturation or command_saturated
-        self.loop.predict(applied_torque)
+        estimator_input = (self.last_torque_trace if self.cfg.actuator_mode == 'step_dir'
+                           else applied_torque)
+        self.loop.predict(estimator_input)
         self.steps+=1
         ref=self.reference.sample(self.t)
         effective=self.loop.previous_effective_action
