@@ -4,6 +4,7 @@ from dataclasses import replace
 import numpy as np
 from active_vibration_rig_2d import Controller, RigPlant
 from state_estimator import MeasurementModel, StateEstimator
+from timing_models import AsynchronousSensorSuite, has_synchronous_sensor_timing, normalize_sensor_timing
 
 # 15 present features, 9 known-reference preview features, uncertainty and age.
 FRAME_SIGNS = np.array([-1.]*26, dtype=np.float32)
@@ -35,18 +36,76 @@ class ResidualControlLoop:
         self.p=replace(nominal_params); self.cfg=cfg
         self.controller=Controller(RigPlant(self.p),controller_params,cfg.physics_dt)
         self.measurements=MeasurementModel(measurement_params or nominal_params,cfg.sensor_noise,cfg.linear_encoder,seed)
-        self.estimator=StateEstimator(self.p,cfg.physics_dt,cfg.control_dt,cfg.linear_encoder)
+        self.sensor_timing=normalize_sensor_timing(
+            getattr(cfg,'sensor_timing',{}),cfg.control_dt,cfg.linear_encoder,cfg.physics_dt)
+        self.synchronous_sensors=has_synchronous_sensor_timing(
+            self.sensor_timing,cfg.control_dt)
+        self.sensor_suite=None if self.synchronous_sensors else AsynchronousSensorSuite(
+            measurement_params or nominal_params,self.sensor_timing,cfg.sensor_noise,seed+32452843)
+        history_horizon=(self.sensor_suite.max_latency+cfg.control_dt
+                         if self.sensor_suite is not None else 0.0)
+        self.estimator=StateEstimator(self.p,cfg.physics_dt,cfg.control_dt,cfg.linear_encoder,
+                                      history_horizon=history_horizon)
         self.history=ObservationHistory(cfg.history_length)
-        self.previous_effective_action=0.; self.state=np.zeros(7); self.last_measurement_time=0.
+        initial_measurement_time=(0.0 if self.synchronous_sensors else -cfg.control_dt)
+        self.previous_effective_action=0.; self.state=np.zeros(7)
+        self.last_measurement_time=initial_measurement_time
         self.last_command={}
+        self.pending_sensor_packets=[]
+        self.sensor_suite_started=False
+        self.sensor_messages_received=0
+        self.sensor_messages_processed=0
+        self.delayed_measurements_processed=0
+        self.last_measurement_packets=[]
 
     def observe(self, true_state, time, reference, initial=False):
-        z=self.measurements.sample(true_state,time)
-        self.estimator.update(z)
+        if self.synchronous_sensors:
+            z=self.measurements.sample(true_state,time)
+            self.estimator.update(z)
+            self.last_measurement_time=z['time']
+            self.last_measurement_packets=[{
+                'acquisition_time':z['time'],'arrival_time':z['time'],
+                'channels':tuple(key for key in z if key!='time')}]
+            self.sensor_messages_received+=len(self.last_measurement_packets[0]['channels'])
+            self.sensor_messages_processed+=len(self.last_measurement_packets[0]['channels'])
+        else:
+            if not self.sensor_suite_started:
+                self.sensor_suite.reset()
+                self.sensor_suite_started=True
+            self.sensor_tick(true_state,time)
+            due=sorted(self.pending_sensor_packets,
+                       key=lambda packet:(packet['arrival_time'],packet['sequence']))
+            self.pending_sensor_packets=[]
+            self.last_measurement_packets=[dict(packet) for packet in due]
+            grouped={}
+            for packet in due:
+                key=(round(packet['acquisition_time'],12),round(packet['arrival_time'],12))
+                grouped.setdefault(key,{'time':packet['acquisition_time'],
+                                        'acquisition_time':packet['acquisition_time'],
+                                        'arrival_time':packet['arrival_time']})
+                grouped[key][packet['channel']]=packet['value']
+                self.last_measurement_time=max(self.last_measurement_time,
+                                               packet['acquisition_time'])
+            for measurement in grouped.values():
+                self.estimator.update(measurement)
+                if measurement['acquisition_time'] < time-1e-12:
+                    self.delayed_measurements_processed += sum(
+                        key in measurement for key in ('motor_angle','lever_angle','gyro','carriage_position'))
+                self.sensor_messages_processed+=sum(
+                    key in measurement for key in ('motor_angle','lever_angle','gyro','carriage_position'))
         self.state=true_state.copy() if self.cfg.oracle_state else self.estimator.state
-        self.last_measurement_time=z['time']
         frame=self.frame(reference,time)
         return self.history.reset(frame) if initial else self.history.append(frame)
+
+    def sensor_tick(self,true_state,time):
+        if self.sensor_suite is None:
+            return
+        if not self.sensor_suite_started:
+            self.sensor_suite.reset()
+            self.sensor_suite_started=True
+        packets=self.sensor_suite.tick(true_state,time)
+        self.pending_sensor_packets.extend(packets)
+        self.sensor_messages_received+=len(packets)
 
     def base_accel(self, ref): return self.controller.modern_accel(self.state,ref,'lqr')
 

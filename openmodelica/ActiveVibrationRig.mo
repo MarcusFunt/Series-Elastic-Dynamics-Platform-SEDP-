@@ -203,7 +203,8 @@ package ActiveVibrationRig
     fLy = -magL*qLy/max(lL,1e-9);
     fRx = -magR*qRx/max(lR,1e-9);
     fRy = -magR*qRy/max(lR,1e-9);
-    tauSpringGeom = xs*(fLy + fRy) - ys*(fLx + fRx);
+    // Generalized torque for x=r*sin(th), y=r*cos(th): F dot d(position)/d(th).
+    tauSpringGeom = ys*(fLx + fRx) - xs*(fLy + fRy);
 
     tauSpringEquivalent = -p.kTheta*th - p.kTheta3*th^3 - p.cTheta*wTh;
     tauSpring = if p.useGeometricSprings then tauSpringGeom else tauSpringEquivalent;

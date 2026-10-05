@@ -4,7 +4,7 @@ Teacher fallback actions are excluded from fitting. Validation is split by
 whole episode. Policies are never promoted by training reward alone.
 """
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 import time
@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from ppo_agent_v2 import (ActorCriticV2,ActorCriticV4,PPOConfigV2,RolloutBufferV2,ppo_update_v2,
                           save_checkpoint_v2,reflect_observation)
+from active_vibration_rig_2d import StepDirParams
 from rig_rl_env_v4 import RigRLEnvV4,RLEnvConfigV4,VectorRigEnvV4
 from constrained_mpc import ConstrainedMPC,MPCConfig
 from residual_control_v4 import FRAME_SIGNS
@@ -20,9 +21,13 @@ from evaluate_v4 import reference_preview,evaluate,promotion,load_policy
 SCHEMA='sedp-v4-estimated-context-history'
 
 
-def metadata(steps,mode,**kwargs):
+def metadata(steps,mode,cfg=None,**kwargs):
+    actuator_mode=cfg.actuator_mode if cfg is not None else 'torque'
+    controller_timing=('held torque at control_dt' if actuator_mode=='torque' else
+                       'acceleration-derived velocity target at control_dt; STEP pulses integrated at physics_dt')
     return {'observation_schema':SCHEMA,'steps':steps,'mode':mode,
-            'controller_timing':'held torque at control_dt','nominal_controller_parameters':True,**kwargs}
+            'controller_timing':controller_timing,'actuator_mode':actuator_mode,
+            'nominal_controller_parameters':True,**kwargs}
 
 
 def collect_teacher(cfg,samples,episodes,seed,horizon):
@@ -32,9 +37,16 @@ def collect_teacher(cfg,samples,episodes,seed,horizon):
     for episode in range(episodes):
         env=RigRLEnvV4(cfg=cfg,seed=seed+1009*episode);obs,_=env.reset()
         teacher=ConstrainedMPC(env.base_params,env.cp,MPCConfig(horizon=horizon,
-                    physics_dt=cfg.physics_dt,control_dt=cfg.control_dt,residual_accel_limit=cfg.residual_accel_limit))
+                    physics_dt=cfg.physics_dt,control_dt=cfg.control_dt,
+                    residual_accel_limit=cfg.residual_accel_limit,
+                    actuator_mode=cfg.actuator_mode,step_dir=cfg.step_dir,
+                    command_delay=cfg.command_delay,command_jitter=cfg.command_jitter))
         for _ in range(min(per_episode,cfg.max_steps)):
-            action=teacher.action(env.loop.state,reference_preview(env,horizon))
+            action=teacher.action(
+                env.loop.state,reference_preview(env,horizon),
+                command_queue=env.command_queue,step_dir_actuator=env.step_dir_actuator,
+                time_s=env.t,kick_torque=env.kick_torque,kick_at=env.kick_at,
+                kick_duration=env.kick_duration)
             X.append(obs.copy());Y.append([action]);groups.append(episode)
             valid.append(teacher.diagnostics['success']);diagnostics.append(dict(teacher.diagnostics))
             obs,_,te,tr,_=env.step([action])
@@ -102,7 +114,7 @@ def train_ppo(model,cfg,args,outdir):
              'projection_fraction':float(np.mean([abs(i['requested_residual_accel']-i['effective_residual_accel'])>1e-6 for i in infos_all])),
              'reward_costs':{k:float(np.mean([i[k] for i in infos_all])) for k in infos_all[0] if k.startswith('cost_')}}
         logs.append(log);print('PPO',json.dumps(log),flush=True)
-        save_checkpoint_v2(outdir/f'policy_{steps:08d}.pt',model,pc,asdict(cfg),metadata(steps,'ppo'))
+        save_checkpoint_v2(outdir/f'policy_{steps:08d}.pt',model,pc,asdict(cfg),metadata(steps,'ppo',cfg=cfg))
     return pc,logs,steps
 
 
@@ -113,6 +125,9 @@ def main():
     ap.add_argument('--epochs',type=int,default=30);ap.add_argument('--horizon',type=int,default=40)
     ap.add_argument('--history',type=int,default=8);ap.add_argument('--linear-encoder',action='store_true')
     ap.add_argument('--oracle-state',action='store_true');ap.add_argument('--init',type=Path)
+    ap.add_argument('--actuator-mode',choices=['torque','step_dir'])
+    ap.add_argument('--step-dir-max-velocity',type=float)
+    ap.add_argument('--step-dir-max-acceleration',type=float)
     ap.add_argument('--steps',type=int,default=65536);ap.add_argument('--envs',type=int,default=8)
     ap.add_argument('--rollout',type=int,default=256);ap.add_argument('--learning-rate',type=float,default=3e-5)
     ap.add_argument('--anchor-kl',type=float,default=.005)
@@ -120,19 +135,35 @@ def main():
     args=ap.parse_args();torch.set_num_threads(1);np.random.seed(args.seed);torch.manual_seed(args.seed)
     if args.epochs<1 or args.steps<1 or args.envs<1 or args.rollout<2:raise ValueError('Training counts must be positive')
     out=args.outdir;out.mkdir(parents=True,exist_ok=True);started=time.time()
-    cfg=RLEnvConfigV4(history_length=args.history,linear_encoder=args.linear_encoder,oracle_state=args.oracle_state)
+    step_dir=StepDirParams(
+        max_velocity_rad_s=(55.0 if args.step_dir_max_velocity is None else args.step_dir_max_velocity),
+        max_acceleration_rad_s2=(300.0 if args.step_dir_max_acceleration is None else args.step_dir_max_acceleration),
+    )
+    cfg=RLEnvConfigV4(history_length=args.history,linear_encoder=args.linear_encoder,
+                      oracle_state=args.oracle_state,actuator_mode=args.actuator_mode or 'torque',
+                      step_dir=step_dir)
     if args.mode=='teacher':
         if args.dataset:
             data=np.load(args.dataset,allow_pickle=False)
             source=json.loads((args.dataset.parent/'teacher_config.json').read_text())
             cfg=RLEnvConfigV4(**source['env_config'])
+            if args.actuator_mode is not None and cfg.actuator_mode != args.actuator_mode:
+                raise ValueError('Requested actuator mode does not match the saved teacher dataset')
+            if (args.step_dir_max_velocity is not None and
+                    not np.isclose(cfg.step_dir.max_velocity_rad_s,args.step_dir_max_velocity)):
+                raise ValueError('Requested STEP/DIR speed limit does not match the saved teacher dataset')
+            if (args.step_dir_max_acceleration is not None and
+                    not np.isclose(cfg.step_dir.max_acceleration_rad_s2,args.step_dir_max_acceleration)):
+                raise ValueError('Requested STEP/DIR acceleration limit does not match the saved teacher dataset')
             X,Y,groups,valid=[data[k] for k in ('observations','actions','episode','successful')]
             diagnostics=json.loads((args.dataset.parent/'teacher_solver.json').read_text())
         else:
             X,Y,groups,valid,diagnostics=collect_teacher(cfg,args.samples,args.episodes,args.seed,args.horizon)
         teacher_config=source if args.dataset else {'env_config':asdict(cfg),'seed':args.seed,
-                    'mpc_config':asdict(MPCConfig(horizon=args.horizon,physics_dt=cfg.physics_dt,control_dt=cfg.control_dt,
-                                               residual_accel_limit=cfg.residual_accel_limit))}
+                    'mpc_config':asdict(MPCConfig(horizon=args.horizon,physics_dt=cfg.physics_dt,
+                        control_dt=cfg.control_dt,residual_accel_limit=cfg.residual_accel_limit,
+                        actuator_mode=cfg.actuator_mode,step_dir=cfg.step_dir,
+                        command_delay=cfg.command_delay,command_jitter=cfg.command_jitter))}
         (out/'teacher_config.json').write_text(json.dumps(teacher_config,indent=2))
         np.savez_compressed(out/'teacher_runs.npz',observations=X,actions=Y,episode=groups,successful=valid)
         (out/'teacher_solver.json').write_text(json.dumps(diagnostics,indent=2))
@@ -142,10 +173,18 @@ def main():
     else:
         if args.init:model,cfg,_=load_policy(args.init)
         else:model=ActorCriticV4(26*cfg.history_length,1,128)
+        if args.init and args.actuator_mode is not None:
+            cfg=replace(cfg,actuator_mode=args.actuator_mode)
+        if args.init and args.step_dir_max_velocity is not None:
+            cfg=replace(cfg,step_dir=replace(cfg.step_dir,
+                                            max_velocity_rad_s=args.step_dir_max_velocity))
+        if args.init and args.step_dir_max_acceleration is not None:
+            cfg=replace(cfg,step_dir=replace(cfg.step_dir,
+                                            max_acceleration_rad_s2=args.step_dir_max_acceleration))
         pc,logs,steps=train_ppo(model,cfg,args,out)
         (out/'training.json').write_text(json.dumps(logs,indent=2))
     path=out/'policy_candidate.pt'
-    save_checkpoint_v2(path,model,pc,asdict(cfg),metadata(steps,args.mode,wall_seconds=time.time()-started))
+    save_checkpoint_v2(path,model,pc,asdict(cfg),metadata(steps,args.mode,cfg=cfg,wall_seconds=time.time()-started))
     if not args.skip_evaluation:
         print('EVENT '+json.dumps({'phase':'evaluation'}),flush=True)
         rows=evaluate(model,cfg,args.eval_seeds)
@@ -153,7 +192,7 @@ def main():
         result={'benchmark_version':'SEDP-V4-100HZ','config':asdict(cfg),'rows':rows,'promotion':decision}
         (out/'evaluation.json').write_text(json.dumps(result,indent=2))
         if decision['accepted'] and not cfg.oracle_state:
-            save_checkpoint_v2(out/'policy_accepted.pt',model,pc,asdict(cfg),metadata(steps,args.mode,promotion=decision))
+            save_checkpoint_v2(out/'policy_accepted.pt',model,pc,asdict(cfg),metadata(steps,args.mode,cfg=cfg,promotion=decision))
         print('promotion',decision,flush=True)
     print('candidate',path,flush=True)
 
