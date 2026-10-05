@@ -38,6 +38,14 @@ def held_transition(plant, state, torque, physics_dt, control_dt):
     return y
 
 
+def held_transition_batch(plant, states, torque, physics_dt, control_dt):
+    """Advance many perturbed states through one control interval together."""
+    y = np.asarray(states, dtype=float).copy()
+    for _ in range(round(control_dt/physics_dt)):
+        y = plant.rk4_batch(y, torque, physics_dt)
+    return y
+
+
 def numerical_jacobian(function, point):
     point = np.asarray(point, dtype=float)
     columns = []
@@ -90,11 +98,21 @@ class StateEstimator:
         # Preserve the historical one-step covariance and trajectory path when
         # called at control_dt, while allowing stored transitions to replay.
         old_mean, old_covariance = self.mean.copy(), self.covariance.copy()
-        def transition(s):
-            return np.r_[held_transition(self.plant, s[:7], torque,
-                                        self.physics_dt, dt), s[7]]
-        F = numerical_jacobian(transition, old_mean)
-        self.mean = transition(old_mean)
+        perturbations = np.repeat(old_mean[None, :7], 15, axis=0)
+        epsilons = []
+        for index in range(7):
+            eps = 1e-5*max(1., abs(old_mean[index]))
+            epsilons.append(eps)
+            perturbations[1 + 2*index, index] += eps
+            perturbations[2 + 2*index, index] -= eps
+        propagated = held_transition_batch(
+            self.plant, perturbations, torque, self.physics_dt, dt
+        )
+        F = np.zeros((8, 8), dtype=float)
+        F[7, 7] = 1.0
+        for index, eps in enumerate(epsilons):
+            F[:7, index] = (propagated[1 + 2*index] - propagated[2 + 2*index]) / (2*eps)
+        self.mean = np.r_[propagated[0], old_mean[7]]
         Q = np.diag(np.square([2e-5,.06,3e-5,.025,2e-4,.025,.008,1e-4]))
         self.covariance = F @ old_covariance @ F.T + Q * (dt / self.control_dt)
         self.covariance = (self.covariance + self.covariance.T) * .5

@@ -686,6 +686,107 @@ class RigPlant:
         )
         return np.array([y[1], phi_dd, y[3], x_dd, y[5], th_dd, tau_dot], dtype=float)
 
+    def derivative_batch(
+        self,
+        states: np.ndarray,
+        tau_cmd: float,
+        external_force: float = 0.0,
+        external_torque: float = 0.0,
+    ) -> np.ndarray:
+        """Evaluate the plant derivative for a batch of seven-state vectors.
+
+        This vectorized path is used by the EKF to propagate the central
+        finite-difference perturbations together. It follows ``derivative``
+        term for term so the physical rollout and estimator model remain the
+        same.
+        """
+        states = np.asarray(states, dtype=float)
+        if states.ndim != 2 or states.shape[1] != 7:
+            raise ValueError('Batched plant dynamics require shape (n, 7)')
+        p = self.p
+        phi, wm, x, v, theta, omega, tau_act = states.T
+
+        delta = p.pulley_radius * phi - x
+        delta_dot = p.pulley_radius * wm - v
+        belt = (p.belt_stiffness * delta + p.belt_damping * delta_dot
+                + p.belt_cubic * delta**3)
+        torque_limit = p.motor_hold_torque / np.sqrt(
+            1.0 + (np.abs(wm) / max(p.motor_omega_corner, 1e-6))**2
+        )
+        saturated_torque = np.clip(tau_cmd, -torque_limit, torque_limit)
+        tau_dot = (saturated_torque - tau_act) / max(p.motor_torque_time_constant, 1e-6)
+        motor_friction = p.motor_coulomb * np.tanh(wm / max(abs(p.motor_friction_eps), 1e-9))
+        phi_dd = (tau_act - p.motor_viscous * wm - motor_friction
+                  - p.pulley_radius * belt) / max(p.motor_inertia, 1e-9)
+
+        stop_force = np.where(
+            x > p.rail_half_travel,
+            -p.stop_stiffness * (x - p.rail_half_travel) - p.stop_damping * np.maximum(v, 0.0),
+            np.where(
+                x < -p.rail_half_travel,
+                -p.stop_stiffness * (x + p.rail_half_travel) - p.stop_damping * np.minimum(v, 0.0),
+                0.0,
+            ),
+        )
+        carriage_friction = p.x_coulomb * np.tanh(v / max(abs(p.x_friction_eps), 1e-9))
+        alpha = p.theta_neutral_world + theta
+        mass = p.resonator_mass
+        lever = p.lever_com_distance
+        total_mass = p.carriage_mass + mass
+        inertia = p.resonator_inertia_pivot
+        coupling = mass * lever * np.cos(alpha)
+        rhs_x = (belt + external_force + stop_force - p.b_x * v - carriage_friction
+                 + mass * lever * np.sin(alpha) * omega**2)
+        angular_friction = p.theta_coulomb * np.tanh(
+            omega / max(abs(p.theta_friction_eps), 1e-9)
+        )
+        gravity_increment = mass * p.gravity * lever * (
+            np.sin(alpha) - math.sin(p.theta_neutral_world)
+        )
+        if p.use_geometric_springs:
+            shaft_x = p.spring_shaft_radius * np.sin(alpha)
+            shaft_y = p.spring_shaft_radius * np.cos(alpha)
+            shaft_vx = p.spring_shaft_radius * np.cos(alpha) * omega
+            shaft_vy = -p.spring_shaft_radius * np.sin(alpha) * omega
+            spring_torque = np.zeros_like(theta)
+            for anchor_x in (-p.spring_anchor_half_spacing, p.spring_anchor_half_spacing):
+                dx = shaft_x - anchor_x
+                dy = shaft_y - p.spring_anchor_y
+                length = np.hypot(dx, dy)
+                safe_length = np.maximum(length, 1e-12)
+                length_rate = (dx * shaft_vx + dy * shaft_vy) / safe_length
+                magnitude = p.spring_k * (length - p.spring_free_length) + p.spring_d * length_rate
+                force_x = -magnitude * dx / safe_length
+                force_y = -magnitude * dy / safe_length
+                spring_torque += (force_x * p.spring_shaft_radius * np.cos(alpha)
+                                  - force_y * p.spring_shaft_radius * np.sin(alpha))
+        else:
+            spring_torque = -p.k_theta * theta - p.k_theta3 * theta**3 - p.c_theta * omega
+        rhs_theta = external_torque - angular_friction + spring_torque + gravity_increment
+
+        determinant = total_mass * inertia - coupling**2
+        if np.any(determinant <= 1e-12):
+            raise RuntimeError('Mass matrix became singular; check mass/inertia parameters.')
+        x_dd = (inertia * rhs_x - coupling * rhs_theta) / determinant
+        theta_dd = (-coupling * rhs_x + total_mass * rhs_theta) / determinant
+        return np.column_stack((wm, phi_dd, v, x_dd, omega, theta_dd, tau_dot))
+
+    def rk4_batch(
+        self,
+        states: np.ndarray,
+        tau_cmd: float,
+        dt: float,
+        external_force: float = 0.0,
+        external_torque: float = 0.0,
+    ) -> np.ndarray:
+        """Integrate a batch of states with the same held input using RK4."""
+        states = np.asarray(states, dtype=float)
+        k1 = self.derivative_batch(states, tau_cmd, external_force, external_torque)
+        k2 = self.derivative_batch(states + 0.5 * dt * k1, tau_cmd, external_force, external_torque)
+        k3 = self.derivative_batch(states + 0.5 * dt * k2, tau_cmd, external_force, external_torque)
+        k4 = self.derivative_batch(states + dt * k3, tau_cmd, external_force, external_torque)
+        return states + dt * (k1 + 2*k2 + 2*k3 + k4) / 6.0
+
     def rk4(
         self,
         y: np.ndarray,

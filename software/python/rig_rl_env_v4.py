@@ -18,6 +18,7 @@ class RLEnvConfigV4(RLEnvConfigV3):
     linear_encoder: bool = False
     sensor_timing: dict = field(default_factory=dict)
     oracle_state: bool = False
+    preview_enabled: bool = True
     observation_noise_std: float = 0.
     reward_scale: float = .02
 

@@ -1,0 +1,63 @@
+{
+  "benchmark": "sedp-v4-ppo-rollout-throughput",
+  "source_revision": "0e1290bb13ea33d9f3751be4e7a940f39364e6ca",
+  "python_version": "3.13.5",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "config": {
+    "n_envs": 4,
+    "vector_steps_per_repeat": 100,
+    "repeats": 3,
+    "history_length": 8,
+    "sensor_noise": true,
+    "actuator_mode": "torque"
+  },
+  "pair_order": [
+    [
+      "scalar_reference",
+      "vectorized"
+    ],
+    [
+      "vectorized",
+      "scalar_reference"
+    ],
+    [
+      "scalar_reference",
+      "vectorized"
+    ]
+  ],
+  "scalar_reference": {
+    "transitions_per_second": [
+      123.88628168611439,
+      116.712187337396,
+      129.54837880575104
+    ],
+    "median_transitions_per_second": 123.88628168611439
+  },
+  "vectorized": {
+    "transitions_per_second": [
+      194.4122044214965,
+      188.93158480552646,
+      195.09408607337994
+    ],
+    "median_transitions_per_second": 194.4122044214965
+  },
+  "paired_speedups": [
+    1.5692795180831303,
+    1.6187819722661516,
+    1.505955442066243
+  ],
+  "median_paired_speedup": 1.5692795180831303,
+  "seeded_parity": {
+    "steps": 100,
+    "max_absolute_errors": {
+      "plant_state": 3.367262024767115e-11,
+      "estimator_mean": 8.024336750622751e-11,
+      "covariance": 1.2332298376938056e-11,
+      "observation": 0.0,
+      "reward": 0.0,
+      "applied_torque": 1.6225909504896663e-13
+    }
+  },
+  "scalar_profile": "         6498307 function calls in 4.791 seconds\n\n   Ordered by: cumulative time\n   List reduced from 133 to 16 due to restriction <16>\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n       60    0.002    0.000    4.791    0.080 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\rig_rl_env_v4.py:141(step)\n      240    0.024    0.000    4.787    0.020 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\rig_rl_env_v4.py:60(step)\n    43200    0.631    0.000    4.342    0.000 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\active_vibration_rig_2d.py:790(rk4)\n      240    0.000    0.000    4.336    0.018 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\residual_control_v4.py:143(predict)\n      240    0.003    0.000    4.336    0.018 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\state_estimator.py:120(predict)\n      240    0.015    0.000    4.326    0.018 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\benchmark_ppo_v5.py:21(_legacy_propagate)\n     4080    0.015    0.000    4.260    0.001 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\benchmark_ppo_v5.py:25(transition)\n     4080    0.054    0.000    4.144    0.001 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\state_estimator.py:34(held_transition)\n      240    0.023    0.000    4.053    0.017 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\state_estimator.py:49(numerical_jacobian)\n   172800    0.085    0.000    3.711    0.000 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\active_vibration_rig_2d.py:798(<lambda>)\n   172800    0.232    0.000    3.626    0.000 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\active_vibration_rig_2d.py:677(derivative)\n   172800    1.345    0.000    3.218    0.000 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\active_vibration_rig_2d.py:619(accelerations)\n   518880    0.368    0.000    0.604    0.000 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\active_vibration_rig_2d.py:149(smooth_sign)\n   172800    0.332    0.000    0.433    0.000 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\active_vibration_rig_2d.py:508(belt_force)\n   175200    0.190    0.000    0.282    0.000 C:\\Users\\marcu\\.codex\\worktrees\\physics-validation\\Series-Elastic-Dynamics-Platform-SEDP-\\software\\python\\active_vibration_rig_2d.py:504(motor_torque_limit)\n   185760    0.185    0.000    0.185    0.000 {built-in method numpy.array}\n\n\n",
+  "elapsed_seconds": 25.689090800005943
+}

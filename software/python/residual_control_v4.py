@@ -117,10 +117,13 @@ class ResidualControlLoop:
                 base/c.accel_scale,y[1]/c.motor_speed_scale,y[6]/p.motor_hold_torque,
                 ar/c.accel_scale,self.previous_effective_action,1-abs(y[2])/L,
                 (p.pulley_radius*y[0]-y[2])/.001,xr/L,vr/c.vel_scale]
-        preview=getattr(reference,'preview',reference.sample)
-        for offset in PREVIEW_TIMES:
-            px,pv,pa=preview(time+offset)
-            values.extend([(px-xr)/c.pos_scale,pv/c.vel_scale,pa/c.accel_scale])
+        if c.preview_enabled:
+            preview=getattr(reference,'preview',reference.sample)
+            for offset in PREVIEW_TIMES:
+                px,pv,pa=preview(time+offset)
+                values.extend([(px-xr)/c.pos_scale,pv/c.vel_scale,pa/c.accel_scale])
+        else:
+            values.extend([0.0] * (3 * len(PREVIEW_TIMES)))
         values.extend([np.sqrt(max(self.estimator.covariance[2,2],0))/.001,
                        max(0.,time-self.last_measurement_time)/c.control_dt])
         return np.clip(values,-8,8).astype(np.float32)

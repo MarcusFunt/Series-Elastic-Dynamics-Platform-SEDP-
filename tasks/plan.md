@@ -169,9 +169,9 @@ Tune/reshape MPC costs and constraints using paired trajectory evaluations on th
 Measure simulation and rollout throughput first, then optimize the dominant cost without changing environment semantics or observation/reward schemas implicitly.
 
 **Acceptance criteria:**
-- [ ] A reproducible baseline throughput is recorded for fixed environment count and workload.
-- [ ] The selected optimization improves measured throughput and preserves seeded transition parity within defined tolerances.
-- [ ] Training artifacts record code/config versions and wall time.
+- [x] A reproducible baseline throughput is recorded for fixed environment count and workload.
+- [x] The selected optimization improves measured throughput and preserves seeded transition parity within defined tolerances.
+- [x] Training artifacts record code/config versions and wall time.
 
 **Verification:** Run parity checks and a fixed-size throughput comparison after the optimization.
 
@@ -182,12 +182,14 @@ Measure simulation and rollout throughput first, then optimize the dominant cost
 Compare estimator, history, and preview configurations with matched evaluation scenarios and budgets across multiple independent training seeds.
 
 **Acceptance criteria:**
-- [ ] Ablation factors and training/evaluation budgets are fixed before runs begin.
-- [ ] Each configuration is trained with multiple independent seeds and evaluated on shared held-out seeds.
-- [ ] Results include uncertainty/spread across training seeds and report tracking, vibration, constraint, and completion metrics.
-- [ ] Checkpoints, configurations, source revisions, and raw evaluation results are retained.
+- [x] Ablation factors and training/evaluation budgets are fixed before runs begin.
+- [x] Each configuration is trained with multiple independent seeds and evaluated on shared held-out seeds.
+- [x] Results include uncertainty/spread across training seeds and report tracking, vibration, constraint, and completion metrics.
+- [x] Checkpoints, configurations, source revisions, and raw evaluation results are retained.
 
 **Verification:** Generate a reproducible comparison report and apply explicit promotion criteria; distinguish evaluation seeds from training seeds.
+
+**Outcome:** All 12 candidates completed training and shared paired evaluation. No candidate met the 5% mean energy improvement gate; the remaining metric differences are too small to distinguish the configurations at this budget. See `docs/control/PPO_PHASE5.md` and `docs/control/evidence/ppo_ablation_v5.json`.
 
 **Dependencies:** Task 5.1 and Control Model checkpoint.
 
@@ -205,7 +207,7 @@ Compare estimator, history, and preview configurations with matched evaluation s
 
 - Which physical spring dimensions/rates should be treated as the authoritative values when Python and OpenModelica parameter sets are compared? Current OpenModelica geometry values are labeled placeholders.
 - Should the first STEP/DIR comparison use an ideal pulse follower with quantization and limits, or include a calibrated speed/torque pull-out envelope? The current project notes say hardware has not yet been physically validated.
-- What multi-seed training budget is acceptable after the throughput optimization? Select this after profiling, before launching the ablation matrix.
+- The initial post-profile Phase 5 budget was 16,384 transitions per run across 8 environments, 3 training seeds per configuration, and 3 shared held-out randomized seeds. Results were inconclusive and no candidate passed promotion, so a larger follow-up budget is still an open decision.
 
 ## Repository Constraints
 
