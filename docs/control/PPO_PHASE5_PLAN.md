@@ -26,7 +26,7 @@ The oracle-state case is an information upper bound only and is not deployable. 
 - Evaluation: all fixed scenarios in `benchmark_suite.SCENARIOS` plus randomized references using the same three held-out seeds, paired against LQR.
 - The matrix contains 12 independent training runs. Checkpoints, per-run stdout, training logs, run metadata, and raw evaluation rows are retained under the ignored `runs/phase5/ppo_v5` directory. A compact reproducibility/evidence JSON and report are also written under `docs/control/`.
 
-The training budget was selected after profiling: the original scalar EKF rollout measured 178.6 transitions/s median and the batched EKF measured 307.6 transitions/s median on the same 4-environment, three-repeat workload, a 1.72× increase. The PPO matrix budget is therefore 196,608 training transitions total, before evaluation.
+The training budget was selected after profiling. A paired, alternating-order benchmark with 4 environments, 100 vector steps, and three repeats measured 123.9 transitions/s median for the scalar EKF and 194.4 transitions/s median for the batched EKF. The median of the three paired speed ratios was 1.57× (individual pairs: 1.57×, 1.62×, and 1.51×), a consistent gain beyond the observed run-to-run spread. The workload profile attributed most scalar-path time to recomputing the finite-difference EKF Jacobian through RK4. The PPO matrix budget is therefore 196,608 training transitions total, before evaluation.
 
 ## Measures and Promotion
 
