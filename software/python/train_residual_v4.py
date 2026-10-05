@@ -134,7 +134,7 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('mode',choices=['teacher','ppo'])
     ap.add_argument('--dataset',type=Path,help='Re-fit an existing teacher_runs.npz without recollecting');ap.add_argument('--outdir',type=Path,default=Path('runs/v4'));ap.add_argument('--seed',type=int,default=173)
     ap.add_argument('--samples',type=int,default=2400);ap.add_argument('--episodes',type=int,default=8)
-    ap.add_argument('--epochs',type=int,default=30);ap.add_argument('--horizon',type=int,default=40)
+    ap.add_argument('--epochs',type=int,default=30);ap.add_argument('--horizon',type=int,default=8)
     ap.add_argument('--history',type=int,default=8);ap.add_argument('--linear-encoder',action='store_true')
     ap.add_argument('--oracle-state',action='store_true');ap.add_argument('--no-preview',action='store_true')
     ap.add_argument('--init',type=Path)

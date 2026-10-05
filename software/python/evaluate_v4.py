@@ -20,7 +20,7 @@ def reference_preview(env,horizon):
     return [preview(env.t+k*env.cfg.control_dt) for k in range(horizon+1)]
 
 
-def run_case(controller, scenario=None, *, seed=0, cfg=None, model=None, horizon=40, randomized=False):
+def run_case(controller, scenario=None, *, seed=0, cfg=None, model=None, horizon=8, randomized=False):
     cfg=replace(cfg or RLEnvConfigV4(),domain_randomization=randomized,
                 initial_theta_std=np.radians(1.) if randomized else 0.,
                 initial_theta_dot_std=np.radians(5.) if randomized else 0.,
@@ -113,7 +113,7 @@ def run_case(controller, scenario=None, *, seed=0, cfg=None, model=None, horizon
     return result
 
 
-def evaluate(model=None,cfg=None,seeds=(101,202,303),include_mpc=False,horizon=40,
+def evaluate(model=None,cfg=None,seeds=(101,202,303),include_mpc=False,horizon=8,
              compare_mpc=False,scenarios=None):
     rows=[]
     selected_scenarios=SCENARIOS if scenarios is None else tuple(scenarios)
@@ -224,7 +224,7 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--model',type=Path);ap.add_argument('--mpc',action='store_true')
     ap.add_argument('--compare-mpc',action='store_true',help='Compare pre-Phase-4 and tuned objective weights')
     ap.add_argument('--actuator-mode',choices=['torque','step_dir'],default='torque')
-    ap.add_argument('--horizon',type=int,default=40);ap.add_argument('--seeds',nargs='*',type=int,default=[101,202,303])
+    ap.add_argument('--horizon',type=int,default=8);ap.add_argument('--seeds',nargs='*',type=int,default=[101,202,303])
     ap.add_argument('--json',type=Path,required=True);args=ap.parse_args()
     model=None;cfg=RLEnvConfigV4(actuator_mode=args.actuator_mode)
     if args.model:model,cfg,_=load_policy(args.model)

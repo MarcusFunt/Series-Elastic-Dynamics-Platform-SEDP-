@@ -1,5 +1,7 @@
 numpy>=1.26
 scipy>=1.11
+numba>=0.60
+osqp>=1.0
 matplotlib>=3.8
 fastapi>=0.115
 uvicorn>=0.30

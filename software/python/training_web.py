@@ -66,7 +66,7 @@ class TrainingJobs:
     def _settings(self, raw):
         defaults = dict(mode='ppo',steps=65536,envs=8,rollout=256,history=8,seed=173,
                         learning_rate=3e-5,anchor_kl=.005,samples=2400,episodes=8,
-                        epochs=30,horizon=40,linear_encoder=False,evaluate=True,init=None)
+                        epochs=30,horizon=8,linear_encoder=False,evaluate=True,init=None)
         if not isinstance(raw, dict) or set(raw)-set(defaults):
             raise ValueError('Unknown training settings')
         cfg = {**defaults, **raw}
