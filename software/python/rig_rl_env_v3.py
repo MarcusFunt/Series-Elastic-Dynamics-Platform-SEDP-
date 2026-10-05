@@ -173,6 +173,7 @@ class RigRLEnvV3:
         self.plant=RigPlant(self.p)
         self.step_dir_actuator=StepDirActuator(self.cfg.step_dir)
         self.last_actuator_diagnostics={}
+        self.last_torque_trace=()
         self.controller=Controller(self.plant,self.cp,self.cfg.physics_dt)
         self.y=np.zeros(7,dtype=float)
         self.t=0.0; self.steps=0; self.prev_action=0.0; self.previous_requested_action=0.0; self.prev_energy=0.0
@@ -220,6 +221,7 @@ class RigRLEnvV3:
         self.plant=RigPlant(self.p)
         self.step_dir_actuator=StepDirActuator(self.cfg.step_dir)
         self.last_actuator_diagnostics={}
+        self.last_torque_trace=()
         self.controller=Controller(self.plant,self.cp,self.cfg.physics_dt)
         self.y=np.zeros(7,dtype=float)
         self.y[4]=float(self.rng.normal(0,self.cfg.initial_theta_std))
@@ -282,6 +284,7 @@ class RigRLEnvV3:
             'interval_peak_rail_fraction':peak_rail_fraction,
         })
         self.last_actuator_diagnostics=last
+        self.last_torque_trace=tuple(torque_samples)
         return float(np.mean(torque_samples)), last
 
     def _after_physics_step(self):
@@ -338,6 +341,7 @@ class RigRLEnvV3:
                                            rel_tol=0.0,abs_tol=1e-12)
         self.last_base_accel=base;self.last_residual=residual
         if self.cfg.actuator_mode == 'torque':
+            self.last_torque_trace=()
             u=self.controller.torque_from_accel(self.y,applied_accel)
             for _ in range(self.cfg.substeps):
                 ext=self.kick_torque if self.kick_at>=0 and self.kick_at<=self.t<self.kick_at+self.kick_duration else 0.

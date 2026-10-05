@@ -86,12 +86,15 @@ exceeded the rail and fallback bounds, and the step case exceeded the tracking
 and fallback bounds. The machine-readable reasons and per-case metrics are in
 [`mpc_phase4.json`](evidence/mpc_phase4.json).
 
-On the same short windows, torque MPC p95 solve time ranged from 41.5 ms to
-228.7 ms; STEP/DIR ranged from 66.4 ms to 75.8 ms; delayed torque ranged from
-47.8 ms to 137.2 ms. These exceed the 10 ms controller period, so this MPC is
-currently an offline simulation/teacher tool, not a real-time controller.
-STEP/DIR and delayed-command rows also retain their constraint violations,
-saturation, categorized outcomes, and solve-time distributions in the JSON.
+The recorded Phase 4 implementation had torque MPC p95 solve times from
+41.5 ms to 228.7 ms, STEP/DIR times from 66.4 ms to 75.8 ms, and delayed-torque
+times from 47.8 ms to 137.2 ms. Those measurements predate the later CPU
+optimization and do not describe the current default implementation. The
+repository does not yet contain a post-optimization latency result, so current
+default latency relative to the 10 ms control period remains unverified.
+STEP/DIR and delayed-command rows retain their constraint violations,
+saturation, categorized outcomes, and historical solve-time distributions in
+the JSON.
 
 This is a bounded, deterministic comparison, not a broad robustness or
 hardware-calibration claim. The rejected tuning remains available for further

@@ -33,10 +33,12 @@ ticks; several packets can arrive between controller observations.
 Packets retain `acquisition_time` and `arrival_time`. Packets become available
 to the estimator at their arrival time and are consumed at the next controller
 observation. A delayed EKF update is inserted at its acquisition time; replay
-splits held-command transitions at physics ticks, then replays later
-measurements through the current time. Its history horizon covers the maximum
-configured sensor latency plus one control interval. `sensor_packets`, message
-counts, and cumulative dropout counts are included in v4 step info.
+splits torque transitions at physics ticks and reuses the recorded per-step
+torque trace. Torque mode records a held torque, while STEP/DIR records the
+actuator's changing torque output. Later measurements are replayed through the
+current time. The history horizon covers the maximum configured sensor latency
+plus one control interval. `sensor_packets`, message counts, and cumulative
+dropout counts are included in v4 step info.
 
 An empty mapping, or explicit per-channel settings with the control period and
 zero impairments, uses the existing synchronous measurement bundle. This keeps

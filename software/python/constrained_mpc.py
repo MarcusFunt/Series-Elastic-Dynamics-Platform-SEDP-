@@ -29,7 +29,8 @@ except ImportError:
 
 @dataclass
 class MPCConfig:
-    # Eight 10 ms samples keep the default CPU solve inside the 10 ms target.
+    # Eight 10 ms samples target the controller period; current default latency
+    # has not been measured after the later CPU optimization.
     # Longer horizons remain available for offline/reference use.
     horizon: int = 8
     physics_dt: float = .001
@@ -123,24 +124,32 @@ class ConstrainedMPC:
                 self._numba_kernel_enabled = True
 
     def _integrate_torque_batch(self, states, torques, *, time_s=0.,
-                                kick_torque=0., kick_at=-1., kick_duration=0.):
+                                kick_torque=0., kick_at=-1., kick_duration=0.,
+                                deadline=None):
+        self._check_deadline(deadline)
         if self._numba_kernel_enabled:
             try:
-                return torque_transition_batch(
+                result = torque_transition_batch(
                     states, torques, self._kernel_parameters,
                     self._kernel_geometric_springs, self.cfg.physics_dt,
                     round(self.cfg.control_dt / self.cfg.physics_dt),
                     time_s, kick_torque, kick_at, kick_duration)
+                self._check_deadline(deadline)
+                return result
             except Exception as exc:
+                if isinstance(exc, _DeadlineReached):
+                    raise
                 self._numba_kernel_enabled = False
                 self._numba_kernel_error = str(exc)
 
         y = np.asarray(states, dtype=float).copy()
         for i in range(round(self.cfg.control_dt / self.cfg.physics_dt)):
+            self._check_deadline(deadline)
             now = time_s + i * self.cfg.physics_dt
             ext = kick_torque if kick_at >= 0 and kick_at <= now < kick_at + kick_duration else 0.
             y = self.plant.rk4_batch(y, torques, self.cfg.physics_dt,
                                      external_torque=ext)
+        self._check_deadline(deadline)
         return y
 
     def _transition(self, y, accel):
@@ -151,7 +160,8 @@ class ConstrainedMPC:
                                self.cfg.control_dt)
 
     def _transition_active(self, y, accel, step_dir_actuator=None, *, time_s=0.,
-                           kick_torque=0., kick_at=-1., kick_duration=0.):
+                           kick_torque=0., kick_at=-1., kick_duration=0.,
+                           deadline=None):
         """Run one exact control interval and return state plus actuator copy.
 
         ``accel`` is the queued value before the environment's application-time
@@ -167,7 +177,7 @@ class ConstrainedMPC:
             y = self._integrate_torque_batch(
                 y.reshape(1, 7), np.asarray([torque]), time_s=time_s,
                 kick_torque=kick_torque, kick_at=kick_at,
-                kick_duration=kick_duration)[0]
+                kick_duration=kick_duration, deadline=deadline)[0]
             return y, None
 
         actuator = deepcopy(step_dir_actuator) if step_dir_actuator is not None else StepDirActuator(self.cfg.step_dir)
@@ -180,6 +190,7 @@ class ConstrainedMPC:
         requested_motor_velocity = target_carriage_velocity / max(self.p.pulley_radius, 1e-12)
         actuator.command(requested_motor_velocity)
         for i in range(nsteps):
+            self._check_deadline(deadline)
             now = time_s + i * self.cfg.physics_dt
             ext = kick_torque if kick_at >= 0 and kick_at <= now < kick_at + kick_duration else 0.
             diag = actuator.advance(
@@ -187,6 +198,7 @@ class ConstrainedMPC:
                 self.plant.motor_torque_limit(float(y[1])))
             y = self.plant.rk4(y, diag['torque_command_nm'], self.cfg.physics_dt,
                                external_torque=ext)
+        self._check_deadline(deadline)
         return y, actuator
 
     def _augmented_state(self, y, actuator):
@@ -197,12 +209,14 @@ class ConstrainedMPC:
         return np.r_[y, actuator.velocity_rad_s, actuator.position_rad]
 
     def _transition_augmented(self, z, accel, actuator_template, *, time_s=0.,
-                              kick_torque=0., kick_at=-1., kick_duration=0.):
+                              kick_torque=0., kick_at=-1., kick_duration=0.,
+                              deadline=None):
         z = np.asarray(z, dtype=float)
         if self.cfg.actuator_mode == 'torque':
             return self._transition_active(z[:7], accel, time_s=time_s,
                                            kick_torque=kick_torque, kick_at=kick_at,
-                                           kick_duration=kick_duration)[0]
+                                           kick_duration=kick_duration,
+                                           deadline=deadline)[0]
         actuator = deepcopy(actuator_template) if actuator_template is not None else StepDirActuator(self.cfg.step_dir)
         actuator.velocity_rad_s = float(z[7])
         actuator.position_rad = float(z[8])
@@ -211,12 +225,14 @@ class ConstrainedMPC:
                                    - actuator.step_count * actuator.params.step_angle_rad)
         y_next, actuator_next = self._transition_active(
             z[:7], accel, actuator, time_s=time_s, kick_torque=kick_torque,
-            kick_at=kick_at, kick_duration=kick_duration)
+            kick_at=kick_at, kick_duration=kick_duration, deadline=deadline)
         return self._augmented_state(y_next, actuator_next)
 
     def _transition_batch_torque(self, states, accelerations, *, time_s=0.,
-                                 kick_torque=0., kick_at=-1., kick_duration=0.):
+                                 kick_torque=0., kick_at=-1., kick_duration=0.,
+                                 deadline=None):
         """Advance torque-mode perturbations together for finite differences."""
+        self._check_deadline(deadline)
         states = np.asarray(states, dtype=float)
         accelerations = np.asarray(accelerations, dtype=float)
         if (states.ndim != 2 or states.shape[1] != 7
@@ -233,11 +249,12 @@ class ConstrainedMPC:
         ])
         return self._integrate_torque_batch(
             states, torques, time_s=time_s, kick_torque=kick_torque,
-            kick_at=kick_at, kick_duration=kick_duration)
+            kick_at=kick_at, kick_duration=kick_duration, deadline=deadline)
 
     def _linearize_torque_transition(self, z, accel, *, time_s=0., kick_torque=0.,
-                                     kick_at=-1., kick_duration=0.):
+                                     kick_at=-1., kick_duration=0., deadline=None):
         """Compute transition Jacobians in one batched RK4 rollout."""
+        self._check_deadline(deadline)
         z = np.asarray(z, dtype=float)
         points, inputs, epsilons = [], [], []
         for i in range(len(z)):
@@ -254,7 +271,8 @@ class ConstrainedMPC:
         outputs = self._transition_batch_torque(
             np.asarray(points), np.asarray(inputs), time_s=time_s,
             kick_torque=kick_torque, kick_at=kick_at,
-            kick_duration=kick_duration)
+            kick_duration=kick_duration, deadline=deadline)
+        self._check_deadline(deadline)
         F = np.column_stack([
             (outputs[2*i] - outputs[2*i+1]) / (2. * eps)
             for i, eps in enumerate(epsilons)
@@ -306,7 +324,10 @@ class ConstrainedMPC:
         base = 0.
         try:
             base = self.controller.modern_accel(y, tuple(refs[0]), 'lqr')
-            return self._action_impl(y, refs, **kwargs)
+            return self._action_impl(y, refs, _started=started, **kwargs)
+        except _DeadlineReached:
+            return self._fallback(started, 'time_limit',
+                                  'configured MPC time limit reached during model construction or rollout', base)
         except Exception as exc:
             return self._fallback(started, 'numerical_solver_error',
                                   f'model/solver exception: {exc}', base)
@@ -323,6 +344,10 @@ class ConstrainedMPC:
         if status in (5, 6, 7):
             return 'numerical_solver_error'
         return 'solver_failure'
+
+    def _check_deadline(self, deadline):
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise _DeadlineReached()
 
     @staticmethod
     def _solve_osqp(H, g, matrix, lower, upper, lb, ub, initial,
@@ -351,7 +376,14 @@ class ConstrainedMPC:
         solver = osqp.OSQP()
         solver.setup(P=P, q=2. * g, A=A, l=lo, u=hi, **settings)
         solver.warm_start(x=np.asarray(initial, dtype=float))
+        if deadline is not None:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0.:
+                raise _DeadlineReached()
+            solver.update_settings(time_limit=remaining)
         solved = solver.solve()
+        if deadline is not None and time.perf_counter() >= deadline:
+            raise _DeadlineReached()
         info = solved.info
         status_value = int(info.status_val)
         status = {
@@ -372,7 +404,8 @@ class ConstrainedMPC:
             solver_seconds=float(info.solve_time))
 
     def _action_impl(self, state, references, *, command_queue=None, step_dir_actuator=None,
-                     time_s=0., kick_torque=0., kick_at=-1., kick_duration=0.):
+                     time_s=0., kick_torque=0., kick_at=-1., kick_duration=0.,
+                     _started=None):
         c, p, cp = self.cfg, self.p, self.cp
         n = c.horizon
         y = np.asarray(state, dtype=float)
@@ -380,11 +413,11 @@ class ConstrainedMPC:
         if (y.shape != (7,) or refs.shape != (n + 1, 3)
                 or not np.all(np.isfinite(y)) or not np.all(np.isfinite(refs))):
             raise ValueError('MPC requires finite seven-state input and horizon+1 references')
-        started = time.perf_counter()
+        started = time.perf_counter() if _started is None else _started
         deadline = None if c.time_limit_seconds is None else started + c.time_limit_seconds
+        self._check_deadline(deadline)
         base = self.controller.modern_accel(y, tuple(refs[0]), 'lqr')
-        if deadline is not None and time.perf_counter() >= deadline:
-            return self._fallback(started, 'time_limit', 'MPC time limit elapsed before optimization', base)
+        self._check_deadline(deadline)
         if command_queue is None and (c.command_delay > 0 or c.command_jitter > 0):
             return self._fallback(started, 'model_configuration_error',
                                   'live command queue required when delay or jitter is configured', base)
@@ -396,6 +429,7 @@ class ConstrainedMPC:
             or (c.solver_backend == 'auto' and n >= 10))
 
         sources, fixed = self._command_source_plan(command_queue, time_s)
+        self._check_deadline(deadline)
         z0 = self._augmented_state(y, step_dir_actuator)
         dim = len(z0)
         actuator_template = deepcopy(step_dir_actuator) if step_dir_actuator is not None else StepDirActuator(c.step_dir)
@@ -405,6 +439,7 @@ class ConstrainedMPC:
         nominal_applied = np.zeros(n)
         nominal_actuators = [actuator_template]
         for k in range(n):
+            self._check_deadline(deadline)
             current = nominal_z[-1]
             nominal_y = current[:7]
             nominal_u[k] = self.controller.modern_accel(nominal_y, tuple(refs[k]), 'lqr')
@@ -413,7 +448,7 @@ class ConstrainedMPC:
             next_z = self._transition_augmented(
                 current, nominal_applied[k], nominal_actuators[-1],
                 time_s=time_s + k * c.control_dt, kick_torque=kick_torque,
-                kick_at=kick_at, kick_duration=kick_duration)
+                kick_at=kick_at, kick_duration=kick_duration, deadline=deadline)
             nominal_z.append(next_z)
             if c.actuator_mode == 'step_dir':
                 next_actuator = deepcopy(nominal_actuators[-1])
@@ -440,6 +475,7 @@ class ConstrainedMPC:
         max_motor_speed = cp.max_speed / max(p.pulley_radius, 1e-12)
         torque_limit = self.plant.motor_torque_limit(max_motor_speed)
         for k in range(n):
+            self._check_deadline(deadline)
             z_nom = nominal_z[k]
             y_nom = z_nom[:7]
             state_sensitivity = S.copy()
@@ -474,21 +510,23 @@ class ConstrainedMPC:
                     F, G = self._linearize_torque_transition(
                         z_nom, applied_nom, time_s=time_s + k*c.control_dt,
                         kick_torque=kick_torque, kick_at=kick_at,
-                        kick_duration=kick_duration)
+                        kick_duration=kick_duration, deadline=deadline)
             else:
                 f = lambda z: self._transition_augmented(
                     z, applied_nom, nominal_actuators[k], time_s=time_s + k*c.control_dt,
-                    kick_torque=kick_torque, kick_at=kick_at, kick_duration=kick_duration)
+                    kick_torque=kick_torque, kick_at=kick_at, kick_duration=kick_duration,
+                    deadline=deadline)
                 F = numerical_jacobian(f, z_nom)
                 eps = .1
                 G = (self._transition_augmented(
                         z_nom, applied_nom + eps, nominal_actuators[k],
                         time_s=time_s + k*c.control_dt, kick_torque=kick_torque,
-                        kick_at=kick_at, kick_duration=kick_duration)
+                        kick_at=kick_at, kick_duration=kick_duration, deadline=deadline)
                      - self._transition_augmented(
                         z_nom, applied_nom - eps, nominal_actuators[k],
                         time_s=time_s + k*c.control_dt, kick_torque=kick_torque,
-                        kick_at=kick_at, kick_duration=kick_duration)) / (2. * eps)
+                        kick_at=kick_at, kick_duration=kick_duration, deadline=deadline)) / (2. * eps)
+            self._check_deadline(deadline)
             # The nominal rollout already evaluated this exact transition.
             affine = nominal_z[k + 1] - F @ z_nom - G * applied_nom
             source = sources[k]
@@ -534,6 +572,7 @@ class ConstrainedMPC:
         scale = max(float(np.max(np.diag(H))), 1.)
         H /= scale; g /= scale
         matrix = np.asarray(rows); lower_array = np.asarray(lower); upper_array = np.asarray(upper)
+        self._check_deadline(deadline)
         equal = np.isclose(lower_array, upper_array, rtol=0., atol=1e-12)
         constraints = []
         if np.any(equal):
@@ -589,7 +628,8 @@ class ConstrainedMPC:
 
         accepted, outcome, reason, nonlinear = self._nonlinear_accept(
             y, refs, candidate, sources, fixed, base, step_dir_actuator, time_s,
-            kick_torque, kick_at, kick_duration, torque_limit, max_motor_speed)
+            kick_torque, kick_at, kick_duration, torque_limit, max_motor_speed,
+            deadline)
         if not accepted:
             return self._fallback(started, outcome, reason, base, result=result,
                                   violation=violation, nonlinear=nonlinear)
@@ -612,17 +652,54 @@ class ConstrainedMPC:
         }
         return action
 
+    def _state_constraint_violations(self, state, max_motor_speed):
+        """Return positive soft-rail and speed excesses for one plant state."""
+        p, cp = self.p, self.cp
+        state = np.asarray(state, dtype=float)
+        return (
+            max(abs(float(state[2])) - cp.rail_soft_fraction * p.rail_half_travel, 0.),
+            max(abs(float(state[3])) - cp.max_speed, 0.),
+            max(abs(float(state[1])) - max_motor_speed, 0.),
+        )
+
     def _nonlinear_accept(self, y, refs, candidate, sources, fixed, base,
                           step_dir_actuator, time_s, kick_torque, kick_at,
-                          kick_duration, torque_limit, max_motor_speed):
+                          kick_duration, torque_limit, max_motor_speed, deadline=None):
         c, p, cp = self.cfg, self.p, self.cp
         current = self._augmented_state(y, step_dir_actuator)
         actuator = deepcopy(step_dir_actuator) if step_dir_actuator is not None else StepDirActuator(c.step_dir)
-        peak_rail = 0.
-        peak_speed = 0.
+        peak_rail = abs(float(current[2])) / max(p.rail_half_travel, 1e-12)
+        peak_carriage_speed = abs(float(current[3]))
+        peak_motor_speed = abs(float(current[1]))
         max_torque_ratio = 0.
         step_torque_saturation = 0
+
+        def observe_state(state):
+            nonlocal peak_rail, peak_carriage_speed, peak_motor_speed
+            state = np.asarray(state, dtype=float)
+            peak_rail = max(peak_rail, abs(float(state[2])) / max(p.rail_half_travel, 1e-12))
+            peak_carriage_speed = max(peak_carriage_speed, abs(float(state[3])))
+            peak_motor_speed = max(peak_motor_speed, abs(float(state[1])))
+            return self._state_constraint_violations(state, max_motor_speed)
+
+        def rejection_diagnostics(violations):
+            return {
+                'nonlinear_peak_rail_fraction': peak_rail,
+                'nonlinear_peak_carriage_speed_m_s': peak_carriage_speed,
+                'nonlinear_peak_motor_speed_rad_s': peak_motor_speed,
+                'nonlinear_max_constraint_violation': max(
+                    violations[0], violations[1],
+                    violations[2] * p.pulley_radius),
+            }
+
+        def violates_tolerance(violations):
+            # Match the existing nonlinear endpoint tolerances, now at every
+            # physics substep rather than only at control-interval boundaries.
+            return (violations[0] > 1e-5 or violations[1] > 1e-4
+                    or violations[2] > 1e-3)
+
         for k, command in enumerate(candidate):
+            self._check_deadline(deadline)
             state = current[:7]
             issue_base = self.controller.modern_accel(state, tuple(refs[k]), 'lqr')
             lo, hi = self.controller.rail_accel_bounds(state)
@@ -646,6 +723,18 @@ class ConstrainedMPC:
                     return False, 'nonlinear_actuator_rejection', 'nonlinear motor torque envelope check', {
                         'nonlinear_peak_rail_fraction': peak_rail,
                         'nonlinear_max_constraint_violation': ratio-1.}
+                current_y = state.copy()
+                nsteps = round(c.control_dt / c.physics_dt)
+                for i in range(nsteps):
+                    self._check_deadline(deadline)
+                    now = time_s + k*c.control_dt + i*c.physics_dt
+                    ext = kick_torque if kick_at >= 0 and kick_at <= now < kick_at+kick_duration else 0.
+                    current_y = self.plant.rk4(
+                        current_y, torque, c.physics_dt, external_torque=ext)
+                    violations = observe_state(current_y)
+                    if violates_tolerance(violations):
+                        return False, 'nonlinear_state_rejection', 'nonlinear substep rail or speed check', rejection_diagnostics(violations)
+                current = current_y
             if c.actuator_mode == 'step_dir':
                 current_y = current[:7]
                 max_carriage_speed = c.step_dir.max_velocity_rad_s * p.pulley_radius
@@ -655,6 +744,7 @@ class ConstrainedMPC:
                 nsteps = round(c.control_dt/c.physics_dt)
                 sat_this_interval = False
                 for i in range(nsteps):
+                    self._check_deadline(deadline)
                     now = time_s + k*c.control_dt + i*c.physics_dt
                     ext = kick_torque if kick_at >= 0 and kick_at <= now < kick_at+kick_duration else 0.
                     diag = actuator.advance(c.physics_dt, float(current_y[0]), float(current_y[1]),
@@ -662,31 +752,19 @@ class ConstrainedMPC:
                     sat_this_interval = sat_this_interval or bool(diag['torque_saturated'])
                     current_y = self.plant.rk4(current_y, diag['torque_command_nm'], c.physics_dt,
                                                external_torque=ext)
-                    peak_rail = max(peak_rail, abs(float(current_y[2]))/p.rail_half_travel)
-                    peak_speed = max(peak_speed, abs(float(current_y[3])))
+                    violations = observe_state(current_y)
+                    if violates_tolerance(violations):
+                        return False, 'nonlinear_state_rejection', 'nonlinear substep rail or speed check', rejection_diagnostics(violations)
                 current = np.r_[current_y, actuator.velocity_rad_s, actuator.position_rad]
                 step_torque_saturation += int(sat_this_interval)
-            else:
-                current_y, _ = self._transition_active(
-                    state, active, time_s=time_s+k*c.control_dt,
-                    kick_torque=kick_torque, kick_at=kick_at, kick_duration=kick_duration)
-                current = current_y
-                peak_rail = max(peak_rail, abs(float(current_y[2]))/p.rail_half_travel)
-                peak_speed = max(peak_speed, abs(float(current_y[3])))
-            state_next = current[:7]
-            peak_speed = max(peak_speed, abs(float(state_next[1]))*p.pulley_radius)
-            if (abs(state_next[2]) > cp.rail_soft_fraction*p.rail_half_travel+1e-5
-                    or abs(state_next[3]) > cp.max_speed+1e-4
-                    or abs(state_next[1]) > max_motor_speed+1e-3):
-                return False, 'nonlinear_state_rejection', 'nonlinear rail or speed check', {
-                    'nonlinear_peak_rail_fraction': peak_rail,
-                    'nonlinear_max_constraint_violation': max(
-                        abs(state_next[2])-cp.rail_soft_fraction*p.rail_half_travel,
-                        abs(state_next[3])-cp.max_speed,
-                        (abs(state_next[1])-max_motor_speed)*p.pulley_radius, 0.)}
+            violations = observe_state(current[:7])
+            if violates_tolerance(violations):
+                return False, 'nonlinear_state_rejection', 'nonlinear rail or speed check', rejection_diagnostics(violations)
+        self._check_deadline(deadline)
         return True, 'success', '', {
             'nonlinear_peak_rail_fraction': peak_rail,
-            'nonlinear_peak_carriage_speed_m_s': peak_speed,
+            'nonlinear_peak_carriage_speed_m_s': peak_carriage_speed,
+            'nonlinear_peak_motor_speed_rad_s': peak_motor_speed,
             'nonlinear_max_torque_ratio': max_torque_ratio,
             'step_dir_torque_saturated_intervals': step_torque_saturation,
             'nonlinear_max_constraint_violation': 0.,
