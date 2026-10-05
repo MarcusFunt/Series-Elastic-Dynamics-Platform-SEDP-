@@ -9,24 +9,36 @@ from copy import deepcopy
 from dataclasses import dataclass
 import math
 import time
+from types import SimpleNamespace
 
 import numpy as np
 from scipy.optimize import minimize, LinearConstraint, Bounds
+from scipy import sparse
 
 from active_vibration_rig_2d import (
     Controller, RigPlant, StepDirActuator, StepDirParams, clamp,
 )
 from state_estimator import held_transition, numerical_jacobian
 from timing_models import CommandDelayQueue
+from mpc_kernels import NUMBA_AVAILABLE, plant_kernel_parameters, torque_transition_batch
+try:
+    import osqp
+except ImportError:
+    osqp = None
 
 
 @dataclass
 class MPCConfig:
-    horizon: int = 40
+    # Eight 10 ms samples keep the default CPU solve inside the 10 ms target.
+    # Longer horizons remain available for offline/reference use.
+    horizon: int = 8
     physics_dt: float = .001
     control_dt: float = .01
     residual_accel_limit: float = 2.5
     max_iterations: int = 60
+    qp_max_iterations: int = 1000
+    solver_backend: str = 'auto'
+    linearization_stride: int = 1
     time_limit_seconds: float | None = None
     tracking_scale: float = .006
     velocity_scale: float = .35
@@ -46,8 +58,12 @@ class MPCConfig:
     command_seed: int = 0
 
     def __post_init__(self):
-        if self.horizon < 2 or self.residual_accel_limit <= 0 or self.max_iterations < 1:
+        if (self.horizon < 2 or self.residual_accel_limit <= 0
+                or self.max_iterations < 1 or self.qp_max_iterations < 1
+                or self.linearization_stride < 1):
             raise ValueError('Invalid MPC configuration')
+        if self.solver_backend not in ('auto', 'slsqp', 'osqp'):
+            raise ValueError("solver_backend must be 'auto', 'slsqp', or 'osqp'")
         if (self.physics_dt <= 0 or self.control_dt < self.physics_dt
                 or not np.isclose(self.control_dt / self.physics_dt,
                                   round(self.control_dt / self.physics_dt))):
@@ -91,6 +107,41 @@ class ConstrainedMPC:
         self.previous_accel = 0.
         self.warm = np.zeros(self.cfg.horizon)
         self.diagnostics = {}
+        self._kernel_parameters, self._kernel_geometric_springs = plant_kernel_parameters(params)
+        self._numba_kernel_enabled = False
+        self._numba_kernel_error = ''
+        if NUMBA_AVAILABLE and self.cfg.actuator_mode == 'torque':
+            try:
+                torque_transition_batch(
+                    np.zeros((1, 7)), np.zeros(1), self._kernel_parameters,
+                    self._kernel_geometric_springs, self.cfg.physics_dt,
+                    round(self.cfg.control_dt / self.cfg.physics_dt),
+                    0., 0., -1., 0.)
+            except Exception as exc:
+                self._numba_kernel_error = str(exc)
+            else:
+                self._numba_kernel_enabled = True
+
+    def _integrate_torque_batch(self, states, torques, *, time_s=0.,
+                                kick_torque=0., kick_at=-1., kick_duration=0.):
+        if self._numba_kernel_enabled:
+            try:
+                return torque_transition_batch(
+                    states, torques, self._kernel_parameters,
+                    self._kernel_geometric_springs, self.cfg.physics_dt,
+                    round(self.cfg.control_dt / self.cfg.physics_dt),
+                    time_s, kick_torque, kick_at, kick_duration)
+            except Exception as exc:
+                self._numba_kernel_enabled = False
+                self._numba_kernel_error = str(exc)
+
+        y = np.asarray(states, dtype=float).copy()
+        for i in range(round(self.cfg.control_dt / self.cfg.physics_dt)):
+            now = time_s + i * self.cfg.physics_dt
+            ext = kick_torque if kick_at >= 0 and kick_at <= now < kick_at + kick_duration else 0.
+            y = self.plant.rk4_batch(y, torques, self.cfg.physics_dt,
+                                     external_torque=ext)
+        return y
 
     def _transition(self, y, accel):
         """Legacy-shaped torque transition retained for callers and diagnostics."""
@@ -113,10 +164,10 @@ class ConstrainedMPC:
         actuator = None
         if self.cfg.actuator_mode == 'torque':
             torque = self.controller.torque_from_accel(y, applied)
-            for i in range(nsteps):
-                now = time_s + i * self.cfg.physics_dt
-                ext = kick_torque if kick_at >= 0 and kick_at <= now < kick_at + kick_duration else 0.
-                y = self.plant.rk4(y, torque, self.cfg.physics_dt, external_torque=ext)
+            y = self._integrate_torque_batch(
+                y.reshape(1, 7), np.asarray([torque]), time_s=time_s,
+                kick_torque=kick_torque, kick_at=kick_at,
+                kick_duration=kick_duration)[0]
             return y, None
 
         actuator = deepcopy(step_dir_actuator) if step_dir_actuator is not None else StepDirActuator(self.cfg.step_dir)
@@ -162,6 +213,68 @@ class ConstrainedMPC:
             z[:7], accel, actuator, time_s=time_s, kick_torque=kick_torque,
             kick_at=kick_at, kick_duration=kick_duration)
         return self._augmented_state(y_next, actuator_next)
+
+    def _transition_batch_torque(self, states, accelerations, *, time_s=0.,
+                                 kick_torque=0., kick_at=-1., kick_duration=0.):
+        """Advance torque-mode perturbations together for finite differences."""
+        states = np.asarray(states, dtype=float)
+        accelerations = np.asarray(accelerations, dtype=float)
+        if (states.ndim != 2 or states.shape[1] != 7
+                or accelerations.shape != (len(states),)):
+            raise ValueError('Batched torque transition requires (n, 7) states and (n,) accelerations')
+
+        applied = np.asarray([
+            self.controller.project_accel(state, float(accel))
+            for state, accel in zip(states, accelerations)
+        ])
+        torques = np.asarray([
+            self.controller.torque_from_accel(state, float(accel))
+            for state, accel in zip(states, applied)
+        ])
+        return self._integrate_torque_batch(
+            states, torques, time_s=time_s, kick_torque=kick_torque,
+            kick_at=kick_at, kick_duration=kick_duration)
+
+    def _linearize_torque_transition(self, z, accel, *, time_s=0., kick_torque=0.,
+                                     kick_at=-1., kick_duration=0.):
+        """Compute transition Jacobians in one batched RK4 rollout."""
+        z = np.asarray(z, dtype=float)
+        points, inputs, epsilons = [], [], []
+        for i in range(len(z)):
+            eps = 1e-5 * max(1., abs(float(z[i])))
+            delta = np.zeros_like(z)
+            delta[i] = eps
+            points.extend((z + delta, z - delta))
+            inputs.extend((accel, accel))
+            epsilons.append(eps)
+
+        input_eps = 1e-4
+        points.extend((z, z))
+        inputs.extend((accel + input_eps, accel - input_eps))
+        outputs = self._transition_batch_torque(
+            np.asarray(points), np.asarray(inputs), time_s=time_s,
+            kick_torque=kick_torque, kick_at=kick_at,
+            kick_duration=kick_duration)
+        F = np.column_stack([
+            (outputs[2*i] - outputs[2*i+1]) / (2. * eps)
+            for i, eps in enumerate(epsilons)
+        ])
+        G = (outputs[-2] - outputs[-1]) / (2. * input_eps)
+        return F, G
+
+    @staticmethod
+    def _sparse_numerical_jacobian(function, point, columns):
+        """Finite-difference only state coordinates used by a scalar model."""
+        point = np.asarray(point, dtype=float)
+        jacobian = np.zeros(len(point))
+        for i in columns:
+            eps = 1e-5 * max(1., abs(float(point[i])))
+            delta = np.zeros_like(point)
+            delta[i] = eps
+            plus = float(np.asarray(function(point + delta)).reshape(-1)[0])
+            minus = float(np.asarray(function(point - delta)).reshape(-1)[0])
+            jacobian[i] = (plus - minus) / (2. * eps)
+        return jacobian
 
     def _command_source_plan(self, command_queue, time_s):
         """Map each predicted control interval to its issuing decision or a held value."""
@@ -211,6 +324,53 @@ class ConstrainedMPC:
             return 'numerical_solver_error'
         return 'solver_failure'
 
+    @staticmethod
+    def _solve_osqp(H, g, matrix, lower, upper, lb, ub, initial,
+                    *, max_iterations, deadline):
+        """Solve the condensed convex QP using OSQP's CPU backend."""
+        n = len(g)
+        P = sparse.triu(sparse.csc_matrix(2. * H), format='csc')
+        A = sparse.vstack((sparse.csc_matrix(matrix), sparse.eye(n, format='csc')),
+                          format='csc')
+        lo = np.r_[lower, lb]
+        hi = np.r_[upper, ub]
+        settings = {
+            'verbose': False,
+            'max_iter': max_iterations,
+            'eps_abs': 1e-6,
+            'eps_rel': 1e-6,
+            'check_termination': 10,
+            'polishing': False,
+        }
+        if deadline is not None:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0.:
+                raise _DeadlineReached()
+            settings['time_limit'] = remaining
+
+        solver = osqp.OSQP()
+        solver.setup(P=P, q=2. * g, A=A, l=lo, u=hi, **settings)
+        solver.warm_start(x=np.asarray(initial, dtype=float))
+        solved = solver.solve()
+        info = solved.info
+        status_value = int(info.status_val)
+        status = {
+            1: 0,   # solved
+            2: 0,   # solved inaccurate; primal feasibility is checked below
+            3: 4,   # primal infeasible
+            4: 4,   # primal infeasible inaccurate
+            7: 9,   # maximum iterations reached
+            8: 10,  # time limit reached
+            9: 6,   # nonconvex problem
+            10: 10, # interrupted
+            11: 8,  # unsolved
+        }.get(status_value, 6)
+        return SimpleNamespace(
+            x=solved.x, success=status_value in (1, 2), status=status,
+            nit=int(info.iter), message=str(info.status),
+            solver_backend='osqp', solver_status=status_value,
+            solver_seconds=float(info.solve_time))
+
     def _action_impl(self, state, references, *, command_queue=None, step_dir_actuator=None,
                      time_s=0., kick_torque=0., kick_at=-1., kick_duration=0.):
         c, p, cp = self.cfg, self.p, self.cp
@@ -228,6 +388,12 @@ class ConstrainedMPC:
         if command_queue is None and (c.command_delay > 0 or c.command_jitter > 0):
             return self._fallback(started, 'model_configuration_error',
                                   'live command queue required when delay or jitter is configured', base)
+        if c.solver_backend == 'osqp' and osqp is None:
+            return self._fallback(started, 'model_configuration_error',
+                                  'OSQP backend requested but the osqp package is unavailable', base)
+        use_osqp = osqp is not None and (
+            c.solver_backend == 'osqp'
+            or (c.solver_backend == 'auto' and n >= 10))
 
         sources, fixed = self._command_source_plan(command_queue, time_s)
         z0 = self._augmented_state(y, step_dir_actuator)
@@ -280,8 +446,12 @@ class ConstrainedMPC:
             state_offset = offset.copy()
             ref = tuple(refs[k])
             base_nom = nominal_u[k]
-            base_y = numerical_jacobian(
-                lambda s: np.array([self.controller.modern_accel(s[:7], ref, 'lqr')]), z_nom)[0]
+            refresh_linearization = (c.actuator_mode != 'torque'
+                                     or k % c.linearization_stride == 0)
+            if refresh_linearization:
+                base_y = self._sparse_numerical_jacobian(
+                    lambda s: np.array([self.controller.modern_accel(s[:7], ref, 'lqr')]),
+                    z_nom, (2, 3, 4, 5))
             residual_row = eye[k] - base_y @ S
             residual_const = -base_nom - base_y @ (offset - z_nom)
             constrain(residual_row, -c.residual_accel_limit - residual_const,
@@ -299,20 +469,28 @@ class ConstrainedMPC:
             g += (c.action_weight / c.residual_accel_limit ** 2) * residual_const * residual_row
 
             applied_nom = nominal_applied[k]
-            f = lambda z: self._transition_augmented(
-                z, applied_nom, nominal_actuators[k], time_s=time_s + k*c.control_dt,
-                kick_torque=kick_torque, kick_at=kick_at, kick_duration=kick_duration)
-            F = numerical_jacobian(f, z_nom)
-            eps = .1 if c.actuator_mode == 'step_dir' else 1e-4
-            G = (self._transition_augmented(
-                    z_nom, applied_nom + eps, nominal_actuators[k],
-                    time_s=time_s + k*c.control_dt, kick_torque=kick_torque,
-                    kick_at=kick_at, kick_duration=kick_duration)
-                 - self._transition_augmented(
-                    z_nom, applied_nom - eps, nominal_actuators[k],
-                    time_s=time_s + k*c.control_dt, kick_torque=kick_torque,
-                    kick_at=kick_at, kick_duration=kick_duration)) / (2. * eps)
-            affine = f(z_nom) - F @ z_nom - G * applied_nom
+            if c.actuator_mode == 'torque':
+                if refresh_linearization:
+                    F, G = self._linearize_torque_transition(
+                        z_nom, applied_nom, time_s=time_s + k*c.control_dt,
+                        kick_torque=kick_torque, kick_at=kick_at,
+                        kick_duration=kick_duration)
+            else:
+                f = lambda z: self._transition_augmented(
+                    z, applied_nom, nominal_actuators[k], time_s=time_s + k*c.control_dt,
+                    kick_torque=kick_torque, kick_at=kick_at, kick_duration=kick_duration)
+                F = numerical_jacobian(f, z_nom)
+                eps = .1
+                G = (self._transition_augmented(
+                        z_nom, applied_nom + eps, nominal_actuators[k],
+                        time_s=time_s + k*c.control_dt, kick_torque=kick_torque,
+                        kick_at=kick_at, kick_duration=kick_duration)
+                     - self._transition_augmented(
+                        z_nom, applied_nom - eps, nominal_actuators[k],
+                        time_s=time_s + k*c.control_dt, kick_torque=kick_torque,
+                        kick_at=kick_at, kick_duration=kick_duration)) / (2. * eps)
+            # The nominal rollout already evaluated this exact transition.
+            affine = nominal_z[k + 1] - F @ z_nom - G * applied_nom
             source = sources[k]
             source_row = np.zeros(n) if source is None else eye[source]
             source_constant = fixed[k] if source is None else 0.
@@ -334,10 +512,12 @@ class ConstrainedMPC:
             # own torque saturation dynamics and records that saturation instead.
             if c.actuator_mode == 'torque':
                 torque_nom = self.controller.torque_from_accel(y_nom, applied_nom)
-                torque_y = numerical_jacobian(
-                    lambda zz: np.array([self.controller.torque_from_accel(zz[:7], applied_nom)]), z_nom)[0]
-                torque_a = (self.controller.torque_from_accel(y_nom, applied_nom + 1e-4)
-                            - self.controller.torque_from_accel(y_nom, applied_nom - 1e-4)) / 2e-4
+                if refresh_linearization:
+                    torque_y = self._sparse_numerical_jacobian(
+                        lambda zz: np.array([self.controller.torque_from_accel(zz[:7], applied_nom)]),
+                        z_nom, (1, 3))
+                    torque_a = (self.controller.torque_from_accel(y_nom, applied_nom + 1e-4)
+                                - self.controller.torque_from_accel(y_nom, applied_nom - 1e-4)) / 2e-4
                 torque_source_row = np.zeros(n) if source is None else eye[source]
                 tq_row = torque_y @ state_sensitivity + torque_a * torque_source_row
                 source_constant = fixed[k] if source is None else 0.
@@ -368,12 +548,24 @@ class ConstrainedMPC:
         try:
             if deadline is not None and time.perf_counter() >= deadline:
                 raise _DeadlineReached()
-            result = minimize(
-                lambda u: float(u @ H @ u + 2. * g @ u),
-                np.clip(nominal_u if not np.any(self.warm) else self.warm, lb, ub),
-                jac=lambda u: 2. * (H @ u + g), method='SLSQP',
-                bounds=Bounds(lb, ub), constraints=constraints, callback=callback,
-                options={'maxiter': c.max_iterations, 'ftol': 1e-8})
+            initial = np.clip(nominal_u if not np.any(self.warm) else self.warm, lb, ub)
+            if use_osqp:
+                result = self._solve_osqp(
+                    H, g, matrix, lower_array, upper_array, lb, ub, initial,
+                    max_iterations=c.qp_max_iterations, deadline=deadline)
+                if deadline is not None and time.perf_counter() >= deadline:
+                    return self._fallback(started, 'time_limit',
+                                          'configured MPC time limit reached', base,
+                                          result=result)
+                if int(result.status) == 10:
+                    return self._fallback(started, 'time_limit',
+                                          str(result.message), base, result=result)
+            else:
+                result = minimize(
+                    lambda u: float(u @ H @ u + 2. * g @ u), initial,
+                    jac=lambda u: 2. * (H @ u + g), method='SLSQP',
+                    bounds=Bounds(lb, ub), constraints=constraints, callback=callback,
+                    options={'maxiter': c.max_iterations, 'ftol': 1e-8})
         except _DeadlineReached:
             return self._fallback(started, 'time_limit', 'configured MPC time limit reached', base)
         except Exception as exc:
@@ -412,6 +604,8 @@ class ConstrainedMPC:
             'iterations': int(getattr(result, 'nit', 0)),
             'constraint_violation': violation,
             'actuator_mode': c.actuator_mode,
+            'solver_backend': getattr(result, 'solver_backend', 'slsqp'),
+            'solver_status': getattr(result, 'solver_status', int(getattr(result, 'status', -1))),
             'command_delay_seconds': c.command_delay if command_queue is None else command_queue.delay,
             'command_jitter_seconds': c.command_jitter if command_queue is None else command_queue.jitter,
             **nonlinear,
@@ -507,7 +701,9 @@ class ConstrainedMPC:
             'reason': str(reason), 'fallback_reason': str(reason), 'fallback_action': 0.,
             'solve_seconds': time.perf_counter()-started,
             'iterations': int(getattr(result, 'nit', 0)) if result is not None else 0,
-            'solver_status': int(getattr(result, 'status', -1)) if result is not None else None,
+            'solver_status': (getattr(result, 'solver_status', int(getattr(result, 'status', -1)))
+                              if result is not None else None),
+            'solver_backend': getattr(result, 'solver_backend', 'slsqp'),
             'constraint_violation': float(violation),
             'actuator_mode': self.cfg.actuator_mode,
         }

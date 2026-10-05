@@ -60,9 +60,17 @@ checkpoints cannot be loaded into the runtime or auto-promoted.
 
 ## MPC reference and teacher
 
-`ConstrainedMPC` re-linearizes the full seven-state held-torque transition at
-each sample and solves a condensed convex quadratic objective with linear
-constraints using SciPy SLSQP. The default horizon is 40 samples (0.40 seconds).
+`ConstrainedMPC` uses a Numba-compiled CPU RK4 kernel for its repeated torque
+rollouts when Numba is installed; the existing NumPy RK4 path remains available
+as a fallback. It re-linearizes the full seven-state held-torque transition at
+each sample by default, then solves the condensed convex quadratic objective
+with OSQP when the horizon is at least 10 samples and SciPy SLSQP for shorter
+horizons. The default horizon is 8 samples (0.08 seconds), selected to keep
+measured action latency below 10 ms while retaining exact per-sample
+linearization. Longer horizons remain configurable and are useful for offline
+experiments, but their action latency can exceed 10 ms. Numba compilation is
+paid once during controller construction, before action timing begins.
+
 Constraints cover rail travel, carriage/motor speed, acceleration, residual
 authority and a conservative speed-dependent torque envelope. The first command
 also obeys the shared rail acceleration bounds. A nonlinear horizon rollout
