@@ -28,13 +28,13 @@
 
 ## Phase 5: PPO Experiments
 
-- [ ] 5.1 Profile and optimize the dominant training cost while preserving seeded transition parity.
-- [ ] 5.2 Predeclare ablation factors and budgets; compare estimator/history/preview across multiple independent training seeds.
-- [ ] 5.3 Produce a reproducible report with shared held-out evaluations and uncertainty/spread.
+- [x] 5.1 Profile and optimize the dominant training cost while preserving seeded transition parity.
+- [x] 5.2 Predeclare ablation factors and budgets; compare estimator/history/preview across multiple independent training seeds.
+- [x] 5.3 Produce a reproducible report with shared held-out evaluations and uncertainty/spread.
 
 ## Final Verification
 
 - [x] Run existing tests before committing implementation changes (full suite executed; see known environment/test-run issues below).
 - [x] Confirm no dependencies, project configuration, or CI files changed without prior approval.
 
-Full-suite result: 68 tests ran; the Phase 4, control, timing, physics, and STEP/DIR tests passed. Two training-web tests did not pass in this Windows run: the symlink fixture requires a privilege unavailable to the process (`WinError 1314`), and the real PPO job did not finish within the test's wait window. No repository configuration or dependency changes were made.
+Full-suite result from the final pre-commit rerun: 68 tests ran; 67 passed, including the real PPO job test. `test_artifacts_cannot_escape_run_directory` errored while creating its symlink fixture because this Windows process lacks the required privilege (`WinError 1314`). The `make` executable was unavailable in this shell, so its target command was run directly as `python -m unittest discover -s tests -p 'test_*.py' -v`. No repository configuration or dependency changes were made.
