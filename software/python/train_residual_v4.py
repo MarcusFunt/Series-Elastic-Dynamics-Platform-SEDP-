@@ -7,6 +7,7 @@ import argparse
 from dataclasses import asdict, replace
 import json
 from pathlib import Path
+import subprocess
 import time
 import numpy as np
 import torch
@@ -28,6 +29,17 @@ def metadata(steps,mode,cfg=None,**kwargs):
     return {'observation_schema':SCHEMA,'steps':steps,'mode':mode,
             'controller_timing':controller_timing,'actuator_mode':actuator_mode,
             'nominal_controller_parameters':True,**kwargs}
+
+
+def source_revision():
+    """Return the repository revision used to produce a training artifact."""
+    root=Path(__file__).resolve().parents[2]
+    try:
+        result=subprocess.run(['git','-C',str(root),'rev-parse','HEAD'],
+                              capture_output=True,text=True,check=True)
+    except (OSError,subprocess.CalledProcessError):
+        return None
+    return result.stdout.strip()
 
 
 def collect_teacher(cfg,samples,episodes,seed,horizon):
@@ -124,7 +136,8 @@ def main():
     ap.add_argument('--samples',type=int,default=2400);ap.add_argument('--episodes',type=int,default=8)
     ap.add_argument('--epochs',type=int,default=30);ap.add_argument('--horizon',type=int,default=40)
     ap.add_argument('--history',type=int,default=8);ap.add_argument('--linear-encoder',action='store_true')
-    ap.add_argument('--oracle-state',action='store_true');ap.add_argument('--init',type=Path)
+    ap.add_argument('--oracle-state',action='store_true');ap.add_argument('--no-preview',action='store_true')
+    ap.add_argument('--init',type=Path)
     ap.add_argument('--actuator-mode',choices=['torque','step_dir'])
     ap.add_argument('--step-dir-max-velocity',type=float)
     ap.add_argument('--step-dir-max-acceleration',type=float)
@@ -140,7 +153,8 @@ def main():
         max_acceleration_rad_s2=(300.0 if args.step_dir_max_acceleration is None else args.step_dir_max_acceleration),
     )
     cfg=RLEnvConfigV4(history_length=args.history,linear_encoder=args.linear_encoder,
-                      oracle_state=args.oracle_state,actuator_mode=args.actuator_mode or 'torque',
+                      oracle_state=args.oracle_state,preview_enabled=not args.no_preview,
+                      actuator_mode=args.actuator_mode or 'torque',
                       step_dir=step_dir)
     if args.mode=='teacher':
         if args.dataset:
@@ -184,7 +198,19 @@ def main():
         pc,logs,steps=train_ppo(model,cfg,args,out)
         (out/'training.json').write_text(json.dumps(logs,indent=2))
     path=out/'policy_candidate.pt'
-    save_checkpoint_v2(path,model,pc,asdict(cfg),metadata(steps,args.mode,cfg=cfg,wall_seconds=time.time()-started))
+    revision=source_revision()
+    elapsed=time.time()-started
+    run_metadata=metadata(steps,args.mode,cfg=cfg,wall_seconds=elapsed,
+                          source_revision=revision,seed=args.seed)
+    (out/'run_metadata.json').write_text(json.dumps({
+        **run_metadata,
+        'arguments':{key:(str(value) if isinstance(value,Path) else value)
+                     for key,value in vars(args).items()},
+        'python_version':__import__('platform').python_version(),
+        'numpy_version':np.__version__,
+        'torch_version':torch.__version__,
+    },indent=2))
+    save_checkpoint_v2(path,model,pc,asdict(cfg),run_metadata)
     if not args.skip_evaluation:
         print('EVENT '+json.dumps({'phase':'evaluation'}),flush=True)
         rows=evaluate(model,cfg,args.eval_seeds)
