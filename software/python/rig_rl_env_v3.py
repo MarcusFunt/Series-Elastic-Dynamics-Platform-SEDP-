@@ -40,6 +40,12 @@ class RLEnvConfigV3:
     target_fraction_min: float = 0.42
     target_fraction_max: float = 0.64
     instant_step_probability: float = 0.10
+    reference_mode: str = 'random_segments'
+    goal_edge_margin_m: float = 0.015
+    goal_target_buffer_m: float = 0.002
+    goal_move_seconds: float = 1.0
+    goal_hold_min_seconds: float = 2.5
+    goal_hold_extra_seconds: float = 0.5
 
     domain_randomization: bool = True
     mass_factor: Tuple[float,float] = (0.86, 1.18)
@@ -101,6 +107,11 @@ class RLEnvConfigV3:
             raise ValueError("control_dt must be an integer multiple of physics_dt")
         if not math.isclose(self.episode_seconds/self.control_dt, round(self.episode_seconds/self.control_dt), abs_tol=1e-9):
             raise ValueError("episode_seconds must be an integer multiple of control_dt")
+        if self.reference_mode not in ('random_segments', 'random_goal_hold'):
+            raise ValueError("reference_mode must be 'random_segments' or 'random_goal_hold'")
+        if (self.goal_edge_margin_m < 0 or self.goal_target_buffer_m < 0 or self.goal_move_seconds <= 0 or
+                self.goal_hold_min_seconds < 2.0 or self.goal_hold_extra_seconds < 0):
+            raise ValueError('Goal-hold margin and timing parameters are invalid')
 
     @property
     def substeps(self) -> int:
@@ -158,6 +169,72 @@ class SmoothRandomReference:
         return self.x0+dx*s, dx*sd, dx*sdd
 
 
+class RandomGoalHoldReference:
+    """Random point-to-point goals with a guaranteed multi-second dwell.
+
+    Targets are sampled uniformly inside the physical rail minus the configured
+    edge margin. Each announced target is reached with a minimum-jerk move and
+    held for at least ``goal_hold_min_seconds`` before the next target is drawn.
+    """
+
+    def __init__(self, rng: np.random.Generator, cfg: RLEnvConfigV3, half_travel: float):
+        self.rng=rng; self.cfg=cfg; self.L=float(half_travel)
+        self.bound=self.L-cfg.goal_edge_margin_m-cfg.goal_target_buffer_m
+        if self.bound <= 0:
+            raise ValueError('goal_edge_margin_m must be smaller than rail half travel')
+        self.x0=0.0; self.x1=self._new_target(0.0); self.t0=0.0
+        self.Tmove=cfg.goal_move_seconds
+        self.T=self.Tmove+cfg.goal_hold_min_seconds+float(
+            self.rng.uniform(0.,cfg.goal_hold_extra_seconds))
+        self.instant=False; self.change_count=0
+
+    def _new_target(self,prior):
+        target=float(self.rng.uniform(-self.bound,self.bound))
+        # Avoid trivial consecutive goals when the available corridor permits it.
+        if self.bound >= .015 and abs(target-prior) < .015:
+            if abs(prior) < .015:
+                sign=float(self.rng.choice((-1.,1.))) if abs(prior)<1e-9 else (-1. if prior>0 else 1.)
+                target=sign*float(self.rng.uniform(.015,self.bound))
+            else:
+                target=-prior
+        return target
+
+    def _new_segment(self,t):
+        move=self.cfg.goal_move_seconds
+        hold=self.cfg.goal_hold_min_seconds+float(
+            self.rng.uniform(0.,self.cfg.goal_hold_extra_seconds))
+        self.t0=float(t)
+        if t+move+hold > self.cfg.episode_seconds+1e-9:
+            # Do not announce a goal that cannot receive its complete promised dwell.
+            self.x0=float(self.x1); self.Tmove=0.; self.T=float('inf')
+            return
+        self.x0=float(self.x1); self.x1=self._new_target(self.x0)
+        self.Tmove=move; self.T=move+hold
+        self.change_count+=1
+
+    def preview(self,t):
+        q=float(t)-self.t0
+        if q >= self.Tmove:
+            return self.x1,0.0,0.0
+        z=clamp(q/self.Tmove,0.0,1.0)
+        s=10*z**3-15*z**4+6*z**5
+        sd=(30*z**2-60*z**3+30*z**4)/self.Tmove
+        sdd=(60*z-180*z**2+120*z**3)/(self.Tmove*self.Tmove)
+        dx=self.x1-self.x0
+        return self.x0+dx*s,dx*sd,dx*sdd
+
+    def sample(self,t):
+        if float(t)-self.t0 >= self.T:
+            self._new_segment(t)
+        return self.preview(t)
+
+
+def make_reference(rng, cfg, half_travel):
+    if cfg.reference_mode == 'random_goal_hold':
+        return RandomGoalHoldReference(rng,cfg,half_travel)
+    return SmoothRandomReference(rng,cfg,half_travel)
+
+
 class RigRLEnvV3:
     observation_dim=12
     action_dim=1
@@ -167,6 +244,13 @@ class RigRLEnvV3:
         self.base_params=base_params or PlantParams()
         self.cp=controller_params or ControllerParams()
         self.cfg=cfg or RLEnvConfigV3()
+        if self.cfg.reference_mode == 'random_goal_hold':
+            safe_fraction=(self.base_params.rail_half_travel-
+                           self.cfg.goal_edge_margin_m-self.cfg.goal_target_buffer_m)/max(
+                               self.base_params.rail_half_travel,1e-9)
+            if safe_fraction <= 0:
+                raise ValueError('Goal edge margin and target buffer must leave a usable rail corridor')
+            self.cp=replace(self.cp,rail_soft_fraction=min(self.cp.rail_soft_fraction,safe_fraction))
         self.rng=np.random.default_rng(seed); self.seed_value=seed
         self.command_queue=CommandDelayQueue(self.cfg.command_delay,self.cfg.command_jitter,seed+15485863)
         self.p=self.base_params
@@ -177,7 +261,7 @@ class RigRLEnvV3:
         self.controller=Controller(self.plant,self.cp,self.cfg.physics_dt)
         self.y=np.zeros(7,dtype=float)
         self.t=0.0; self.steps=0; self.prev_action=0.0; self.previous_requested_action=0.0; self.prev_energy=0.0
-        self.reference=SmoothRandomReference(self.rng,self.cfg,self.p.rail_half_travel)
+        self.reference=make_reference(self.rng,self.cfg,self.p.rail_half_travel)
         self.kick_at=-1.;self.kick_duration=0.;self.kick_torque=0.
         self.last_u=0.;self.last_base_accel=0.;self.last_residual=0.
 
@@ -228,7 +312,7 @@ class RigRLEnvV3:
         self.y[5]=float(self.rng.normal(0,self.cfg.initial_theta_dot_std))
         self.t=0.;self.steps=0;self.prev_action=0.;self.previous_requested_action=0.
         self.last_u=0.;self.last_base_accel=0.;self.last_residual=0.;self.last_effective_residual=0.
-        self.reference=SmoothRandomReference(self.rng,self.cfg,self.p.rail_half_travel)
+        self.reference=make_reference(self.rng,self.cfg,self.p.rail_half_travel)
         if self.rng.random()<self.cfg.kick_probability:
             self.kick_at=float(self.rng.uniform(.2,1.2))
             self.kick_duration=float(self.rng.uniform(self.cfg.kick_duration_min,self.cfg.kick_duration_max))

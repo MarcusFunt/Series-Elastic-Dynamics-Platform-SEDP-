@@ -182,6 +182,12 @@ def main():
     ap.add_argument('--anchor-kl',type=float,default=.001)
     ap.add_argument('--energy-gate-weight',type=float,default=0.)
     ap.add_argument('--energy-gate-step-scale-mjs',type=float,default=1.)
+    ap.add_argument('--reference-mode',choices=['random_segments','random_goal_hold'],default='random_segments')
+    ap.add_argument('--episode-seconds',type=float)
+    ap.add_argument('--goal-edge-margin-mm',type=float,default=15.)
+    ap.add_argument('--goal-move-seconds',type=float,default=1.)
+    ap.add_argument('--goal-hold-min-seconds',type=float,default=2.5)
+    ap.add_argument('--goal-hold-extra-seconds',type=float,default=.5)
     ap.add_argument('--eval-seeds',nargs='*',type=int,default=[101,202,303]);ap.add_argument('--skip-evaluation',action='store_true')
     args=ap.parse_args();torch.set_num_threads(1);np.random.seed(args.seed);torch.manual_seed(args.seed)
     if args.epochs<1 or args.steps<1 or args.envs<1 or args.rollout<2:raise ValueError('Training counts must be positive')
@@ -190,10 +196,17 @@ def main():
         max_velocity_rad_s=(55.0 if args.step_dir_max_velocity is None else args.step_dir_max_velocity),
         max_acceleration_rad_s2=(300.0 if args.step_dir_max_acceleration is None else args.step_dir_max_acceleration),
     )
+    episode_seconds=(args.episode_seconds if args.episode_seconds is not None else
+                     (12.0 if args.reference_mode=='random_goal_hold' else 6.0))
     cfg=RLEnvConfigV4(history_length=args.history,linear_encoder=args.linear_encoder,
                       oracle_state=args.oracle_state,preview_enabled=not args.no_preview,
                       actuator_mode=args.actuator_mode or 'torque',
-                      step_dir=step_dir)
+                      step_dir=step_dir,episode_seconds=episode_seconds,
+                      reference_mode=args.reference_mode,
+                      goal_edge_margin_m=args.goal_edge_margin_mm/1000.,
+                      goal_move_seconds=args.goal_move_seconds,
+                      goal_hold_min_seconds=args.goal_hold_min_seconds,
+                      goal_hold_extra_seconds=args.goal_hold_extra_seconds)
     if args.mode=='teacher':
         if args.dataset:
             data=np.load(args.dataset,allow_pickle=False)
@@ -225,6 +238,12 @@ def main():
     else:
         if args.init:model,cfg,_=load_policy(args.init)
         else:model=ActorCriticV4(26*cfg.history_length,1,128)
+        cfg=replace(cfg,episode_seconds=episode_seconds,
+                    reference_mode=args.reference_mode,
+                    goal_edge_margin_m=args.goal_edge_margin_mm/1000.,
+                    goal_move_seconds=args.goal_move_seconds,
+                    goal_hold_min_seconds=args.goal_hold_min_seconds,
+                    goal_hold_extra_seconds=args.goal_hold_extra_seconds)
         if args.init and args.actuator_mode is not None:
             cfg=replace(cfg,actuator_mode=args.actuator_mode)
         if args.init and args.step_dir_max_velocity is not None:
