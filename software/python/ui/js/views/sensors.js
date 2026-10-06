@@ -3,14 +3,22 @@ import {badge, pageHead, sourceNotes, getEvidence, fmt} from '../shared.js';
 const freq = seconds => typeof seconds==='number'&&seconds>0?`${(1/seconds).toFixed(0)} Hz`:'—';
 
 export async function renderSensors(ctx) {
-  const item=ctx.evidence.find(e=>e.id==='goal-hold-confirmation');
+  const items=['goal-hold-confirmation','goal-hold-development']
+    .map(id=>ctx.evidence.find(e=>e.id===id)).filter(item=>item?.available);
   ctx.mounts.push(async()=>{
     const select=document.getElementById('sensorEvidence');
     const table=document.getElementById('sensorTimingRows');
+    if(!items.length){table.innerHTML='<tr><td colspan="6">Saved sensor timing evidence is unavailable in this checkout.</td></tr>';return;}
+    select.value=items[0].id;
     async function update(){
-      const data=await getEvidence(ctx,select.value);
-      const channels=data.task?.sensorTiming||{};
-      table.innerHTML=Object.entries(channels).map(([name,value])=>`<tr><td>${name.replace('_',' ')}</td><td>${freq(value.sample_period)}</td><td>${fmt(value.sample_period*1000,1)}</td><td>${fmt(value.delay*1000,1)}</td><td>${fmt(value.jitter*1000,1)}</td><td>${fmt(value.dropout_probability*100,2)}%</td></tr>`).join('')||'<tr><td colspan="6">No sensor timing in this evidence item.</td></tr>';
+      try {
+        const data=await getEvidence(ctx,select.value);
+        if(!ctx.isCurrent())return;
+        const channels=data.task?.sensorTiming||{};
+        table.innerHTML=Object.entries(channels).map(([name,value])=>`<tr><td>${name.replace('_',' ')}</td><td>${freq(value.sample_period)}</td><td>${fmt(value.sample_period*1000,1)}</td><td>${fmt(value.delay*1000,1)}</td><td>${fmt(value.jitter*1000,1)}</td><td>${fmt(value.dropout_probability*100,2)}%</td></tr>`).join('')||'<tr><td colspan="6">No sensor timing in this evidence item.</td></tr>';
+      } catch(error) {
+        if(ctx.isCurrent())table.innerHTML=`<tr><td colspan="6">Evidence unavailable: ${String(error.message||error)}</td></tr>`;
+      }
     }
     select.addEventListener('change',update);update();
   });
@@ -32,7 +40,7 @@ export async function renderSensors(ctx) {
         <div class="notice" style="margin-top:12px"><b>Core 0 safety rule:</b> remain safe when Core 1 stalls. Avoid blocking logging and USB work on the fast path.</div>${sourceNotes(ctx,['firmware'])}
       </section>
     </div>
-    <section class="panel panel-pad" style="margin-top:14px"><div class="controls-line"><div><div class="panel-head"><div><h2>Saved sensor timing configuration</h2><p>Training environment config, not physical sensor measurements</p></div></div></div><label class="toolbar small muted">Evidence <select id="sensorEvidence" class="selector"><option value="goal-hold-confirmation">Random-goal confirmation</option><option value="goal-hold-development">Random-goal development</option></select></label></div>
+    <section class="panel panel-pad" style="margin-top:14px"><div class="controls-line"><div><div class="panel-head"><div><h2>Saved sensor timing configuration</h2><p>Training environment config, not physical sensor measurements</p></div></div></div><label class="toolbar small muted">Evidence <select id="sensorEvidence" class="selector">${items.map(item=>`<option value="${item.id}">${item.name}</option>`).join('')}</select></label></div>
       <div class="table-wrap"><table class="data-table"><thead><tr><th>Channel</th><th>Sample rate</th><th>Period [ms]</th><th>Delay [ms]</th><th>Jitter [ms]</th><th>Dropout probability</th></tr></thead><tbody id="sensorTimingRows"></tbody></table></div>
       <div class="notice blue" style="margin-top:12px">The saved training run uses simulated timing/noise. These values describe that run’s config and must not be read as bench telemetry.</div>
       ${sourceNotes(ctx,['goal-hold-readme'],['goal-hold-confirmation'])}

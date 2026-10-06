@@ -1,17 +1,67 @@
-import {badge, pageHead, sourceNotes, getEvidence, plot, COLORS, fmt} from '../shared.js';
+import {badge, pageHead, sourceNotes, getEvidence, plot, COLORS, fmt, esc} from '../shared.js';
+
+function renderConvergence(ctx,data) {
+  const convergence=data.timestepConvergence||{},models=convergence.models||[];
+  const scenarios=[...new Set(models.flatMap(model=>(model.scenarios||[]).map(scenario=>scenario.name)))];
+  const limits=convergence.acceptanceLimits||{};
+  const stateLimit=limits.max_normalized_state_error_rms,energyLimit=limits.max_relative_energy_drift_free_case;
+  const rows=models.flatMap(model=>(model.scenarios||[]).flatMap(scenario=>(scenario.steps||[]).map(step=>({model,scenario,step}))))
+    .sort((a,b)=>a.scenario.name.localeCompare(b.scenario.name)||a.model.name.localeCompare(b.model.name)||a.step.physicsDtSeconds-b.step.physicsDtSeconds);
+  const modelName=model=>{
+    const mode=model.springMode||model.name;
+    return mode.includes('two_spring')||mode==='geometric'?'Explicit two-spring geometry':mode==='equivalent_torsion'?'Equivalent torsion':mode.replaceAll('_',' ');
+  };
+  const modelColor=model=>(model.springMode||model.name).includes('two_spring')||model.name==='geometric'?'#f1b36c':(model.springMode||model.name)==='equivalent_torsion'?COLORS.mpc:COLORS.other;
+  const draw=()=>{
+    if(!ctx.isCurrent())return;
+    const scenarioName=document.getElementById('physicsScenario')?.value||scenarios[0];
+    const series=models.map(model=>{
+      const scenario=(model.scenarios||[]).find(item=>item.name===scenarioName),steps=(scenario?.steps||[]).slice().sort((a,b)=>a.physicsDtSeconds-b.physicsDtSeconds);
+      return {x:steps.map(step=>step.physicsDtSeconds),y:steps.map(step=>step.maxNormalizedStateErrorRms),name:modelName(model),mode:'lines+markers',line:{color:modelColor(model)}};
+    });
+    plot('physicsStateErrorChart',series,{xaxis:{title:'Physics timestep [s]',type:'log'},yaxis:{title:'Maximum normalized state error RMS',type:'log'},shapes:Number.isFinite(stateLimit)?[{type:'line',xref:'paper',x0:0,x1:1,yref:'y',y0:stateLimit,y1:stateLimit,line:{color:'#ff8787',dash:'dash',width:1.5}}]:[]});
+    const energySeries=models.map(model=>{
+      const scenario=(model.scenarios||[]).find(item=>item.name===scenarioName),steps=(scenario?.steps||[]).slice().sort((a,b)=>a.physicsDtSeconds-b.physicsDtSeconds);
+      return {x:steps.map(step=>step.physicsDtSeconds),y:steps.map(step=>step.maxRelativeEnergyDrift),name:modelName(model),mode:'lines+markers',line:{color:modelColor(model)}};
+    });
+    plot('physicsEnergyDriftChart',energySeries,{xaxis:{title:'Physics timestep [s]',type:'log'},yaxis:{title:'Maximum relative energy drift',type:'log'},shapes:scenarioName==='free'&&Number.isFinite(energyLimit)?[{type:'line',xref:'paper',x0:0,x1:1,yref:'y',y0:energyLimit,y1:energyLimit,line:{color:'#ff8787',dash:'dash',width:1.5}}]:[]});
+    const table=document.getElementById('physicsConvergenceRows');
+    if(table)table.innerHTML=rows.filter(({scenario})=>scenario.name===scenarioName).map(({model,scenario,step})=>{
+      const statePass=Number.isFinite(stateLimit)&&step.maxNormalizedStateErrorRms<=stateLimit;
+      const energyPass=scenario.name==='free'&&Number.isFinite(energyLimit)?step.maxRelativeEnergyDrift<=energyLimit:null;
+      return `<tr><td>${esc(modelName(model))}</td><td>${esc(scenario.name)}</td><td>${fmt(step.physicsDtSeconds,5)}</td><td>${fmt(step.maxNormalizedStateErrorRms,7)}</td><td>${Number.isFinite(stateLimit)?fmt(stateLimit,7):'—'}</td><td>${statePass?'Pass':'Fail'}</td><td>${fmt(step.maxRelativeEnergyDrift,7)}</td><td>${energyPass===null?'—':energyPass?'Pass':'Fail'}</td><td>${fmt(model.validatedMaxPhysicsDtSeconds,5)}</td></tr>`;
+    }).join('')||'<tr><td colspan="9">No timestep convergence rows are present in the report.</td></tr>';
+  };
+  const select=document.getElementById('physicsScenario');
+  if(select){select.innerHTML=scenarios.map(name=>`<option value="${esc(name)}">${esc(name)}</option>`).join('');select.addEventListener('change',draw);}
+  if(!models.length){
+    for(const id of ['physicsStateErrorChart','physicsEnergyDriftChart']){const node=document.getElementById(id);if(node)node.innerHTML='<div class="empty-state">Timestep convergence evidence is unavailable.</div>';}
+    return;
+  }
+  draw();
+}
 
 export async function renderModels(ctx) {
   const evidence=ctx.evidence.find(x=>x.id==='physics-validation');
-  const subsys=ctx.catalog.subsystems.find(x=>x.id==='digital-twin');
   ctx.mounts.push(async()=>{
     try {
       const data=await getEvidence(ctx,'physics-validation');
-      const curves=data.springModelComparison.torque_comparison||[];
-      plot('springModelChart',[
-        {x:curves.map(r=>r.angle_deg),y:curves.map(r=>r.geometric_torque_nm),name:'Geometric two-spring torque',mode:'lines+markers',line:{color:COLORS.mpc}},
-        {x:curves.map(r=>r.angle_deg),y:curves.map(r=>r.equivalent_torque_nm),name:'Equivalent torsion torque',mode:'lines+markers',line:{color:COLORS.lqr}},
-      ],{xaxis:{title:'Resonator angle [°]'},yaxis:{title:'Spring torque [N·m]'}});
-    } catch { const node=document.getElementById('springModelChart');if(node)node.innerHTML='<div class="empty-state">Physics comparison evidence is unavailable.</div>'; }
+      if(!ctx.isCurrent())return;
+      const curves=data.springModelComparison?.torque_comparison||[];
+      if(curves.length){
+        plot('springModelChart',[
+          {x:curves.map(r=>r.angle_deg),y:curves.map(r=>r.geometric_torque_nm),name:'Geometric two-spring torque',mode:'lines+markers',line:{color:COLORS.mpc}},
+          {x:curves.map(r=>r.angle_deg),y:curves.map(r=>r.equivalent_torque_nm),name:'Equivalent torsion torque',mode:'lines+markers',line:{color:COLORS.lqr}},
+        ],{xaxis:{title:'Resonator angle [°]'},yaxis:{title:'Spring torque [N·m]'}});
+      } else {
+        const node=document.getElementById('springModelChart');if(node)node.innerHTML='<div class="empty-state">Spring comparison data is not present in this report.</div>';
+      }
+      renderConvergence(ctx,data);
+    } catch {
+      if(!ctx.isCurrent())return;
+      for(const id of ['springModelChart','physicsStateErrorChart','physicsEnergyDriftChart']){const node=document.getElementById(id);if(node)node.innerHTML='<div class="empty-state">Physics validation evidence is unavailable.</div>';}
+      const table=document.getElementById('physicsConvergenceRows');if(table)table.innerHTML='<tr><td colspan="9">Physics validation evidence could not be loaded.</td></tr>';
+    }
   });
   return `${pageHead('MODELS','Digital twin','Inspect how the reduced control model, nonlinear Python plant, and OpenModelica model relate. Placeholder parameters and uncalibrated values are identified explicitly.',`<a class="button quiet" href="/api/project/source/openmodelica" target="_blank" rel="noopener">Open Modelica notes ↗</a>`)}
     <div class="grid cols-3">
@@ -32,6 +82,12 @@ export async function renderModels(ctx) {
         ${sourceNotes(ctx,['math-model','physics-validation'],['physics-validation'])}
       </section>
     </div>
+    <section class="panel panel-pad" style="margin-top:14px"><div class="panel-head"><div><h2>Physics timestep convergence</h2><p>Recorded integration error against the report’s acceptance limits; dashed lines mark the threshold where applicable.</p></div>${badge(evidence?.available?'Recorded validation':'Unavailable','recorded')}</div>
+      <label class="toolbar small muted">Scenario <select id="physicsScenario" class="selector"></select></label>
+      <div class="grid cols-2"><section><h3>Normalized state error</h3><div id="physicsStateErrorChart" class="chart"></div></section><section><h3>Relative energy drift</h3><div id="physicsEnergyDriftChart" class="chart"></div></section></div>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Model</th><th>Scenario</th><th>Timestep [s]</th><th>State error RMS</th><th>Limit</th><th>State gate</th><th>Energy drift</th><th>Free energy gate</th><th>Validated max dt [s]</th></tr></thead><tbody id="physicsConvergenceRows"></tbody></table></div>
+      ${sourceNotes(ctx,[],['physics-validation'])}
+    </section>
     <section class="panel panel-pad" style="margin-top:14px"><div class="panel-head"><div><h2>End-to-end model path</h2><p>From geometry and actuator limits to simulated state and control</p></div></div>
       <div class="flow-row"><div class="flow-card"><b>Plant parameters</b><span>mass · spring · damping · belt</span></div><div class="flow-arrow">→</div><div class="flow-card"><b>Nonlinear plant</b><span>7-state ODE / RK integration</span></div><div class="flow-arrow">→</div><div class="flow-card"><b>Sensors & observer</b><span>encoder · gyro · estimator</span></div><div class="flow-arrow">→</div><div class="flow-card"><b>Controller</b><span>servo · LQR · MPC · residual PPO</span></div><div class="flow-arrow">→</div><div class="flow-card"><b>Actuator</b><span>torque and STEP/DIR models</span></div></div>
     </section>`;

@@ -144,8 +144,8 @@
     {"id":"goal-hold-metadata","name":"Random goal-hold run metadata","kind":"configuration","path":"docs/control/evidence/random_goal_hold_20261006/run_metadata.json","dataType":"goal-hold-metadata"}
   ],
   "media": [
-    {"id":"ppo-stage-8192","name":"PPO · 8,192 training steps","stage":"Early learning","description":"Policy checkpoint captured near the start of the best random-goal-and-hold run.","path":"runs/phase5/energy_alignment_mpc_20261006/zero_init_ppo/weight32_seed389/videos/ppo_008192.mp4"},
-    {"id":"ppo-stage-32768","name":"PPO · 32,768 training steps","stage":"Mid training","description":"Intermediate policy checkpoint from the selected training run.","path":"runs/phase5/energy_alignment_mpc_20261006/zero_init_ppo/weight32_seed389/videos/ppo_032768.mp4"},
-    {"id":"ppo-stage-65536","name":"PPO · 65,536 training steps","stage":"Final training step","description":"Final selected policy checkpoint, paired with the independent confirmation evidence.","path":"runs/phase5/energy_alignment_mpc_20261006/zero_init_ppo/weight32_seed389/videos/ppo_065536.mp4"}
+    {"id":"ppo-stage-8192","name":"PPO · 8,192 steps · random goal + hold","stage":"Early checkpoint","description":"Deterministic playback of attempt_07 at fixed seed 101. This visualizes the early checkpoint; it is not a promotion result.","path":"runs/phase5/random_goal_hold_20261006/attempt_07/videos/ppo_008192.mp4"},
+    {"id":"ppo-stage-32768","name":"PPO · 32,768 steps · random goal + hold","stage":"Mid-training checkpoint","description":"Deterministic playback of attempt_07 at fixed seed 101. This visualizes the intermediate checkpoint; it is not a promotion result.","path":"runs/phase5/random_goal_hold_20261006/attempt_07/videos/ppo_032768.mp4"},
+    {"id":"ppo-stage-65536","name":"PPO · 65,536 steps · random goal + hold","stage":"Final checkpoint","description":"Deterministic playback of attempt_07 at fixed seed 101. This visualizes the final training checkpoint; it is not itself the independent promotion evaluation.","path":"runs/phase5/random_goal_hold_20261006/attempt_07/videos/ppo_065536.mp4"}
   ]
 }

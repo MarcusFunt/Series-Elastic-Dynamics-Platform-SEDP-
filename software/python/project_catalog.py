@@ -130,6 +130,23 @@ def _goal_hold_payload(data: dict[str, Any]) -> dict[str, Any]:
 def _physics_payload(data: dict[str, Any]) -> dict[str, Any]:
     spring = data.get("spring_model_comparison", {})
     convergence = data.get("timestep_convergence", {})
+    models = []
+    for model_name, model in convergence.get("models", {}).items():
+        scenarios = []
+        for scenario_name, scenario in model.get("scenarios", {}).items():
+            steps = [{
+                "physicsDtSeconds": step.get("physics_dt_s"),
+                "maxNormalizedStateErrorRms": step.get("max_normalized_state_error_rms"),
+                "maxRelativeEnergyDrift": step.get("max_relative_energy_drift"),
+                "finalAbsoluteStateError": step.get("final_absolute_state_error", {}),
+            } for step in scenario.get("steps", [])]
+            scenarios.append({"name": scenario_name, "steps": steps})
+        models.append({
+            "name": model_name,
+            "springMode": model.get("spring_mode"),
+            "validatedMaxPhysicsDtSeconds": model.get("validated_max_physics_dt_s"),
+            "scenarios": scenarios,
+        })
     return {
         "springModelComparison": {
             key: spring.get(key)
@@ -138,16 +155,10 @@ def _physics_payload(data: dict[str, Any]) -> dict[str, Any]:
             if key in spring
         },
         "timestepConvergence": {
-            "duration_s": convergence.get("duration_s"),
-            "reference_dt_s": convergence.get("reference_dt_s"),
-            "models": {
-                key: {
-                    field: model.get(field)
-                    for field in ("max_normalized_state_error_rms", "max_relative_energy_drift_free_case")
-                    if field in model
-                }
-                for key, model in convergence.get("models", {}).items()
-            },
+            "durationSeconds": convergence.get("duration_s"),
+            "referenceDtSeconds": convergence.get("reference_dt_s"),
+            "acceptanceLimits": convergence.get("acceptance_limits", {}),
+            "models": models,
         },
     }
 
@@ -173,8 +184,5 @@ def public_evidence_source(evidence_id: str) -> tuple[dict[str, Any], str]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if item["dataType"] == "goal-hold":
         data = _goal_hold_payload(data)
-    elif item["dataType"] == "physics":
-        data = _physics_payload(data)
-    else:
-        data = _public_json(data)
+    data = _public_json(data)
     return item, json.dumps(data, indent=2, allow_nan=False)
