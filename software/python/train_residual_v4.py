@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from ppo_agent_v2 import (ActorCriticV2,ActorCriticV4,PPOConfigV2,RolloutBufferV2,ppo_update_v2,
                           save_checkpoint_v2,reflect_observation)
-from active_vibration_rig_2d import StepDirParams
+from active_vibration_rig_2d import PlantParams,StepDirParams
 from rig_rl_env_v4 import RigRLEnvV4,RLEnvConfigV4,VectorRigEnvV4
 from constrained_mpc import ConstrainedMPC,MPCConfig
 from residual_control_v4 import FRAME_SIGNS
@@ -68,12 +68,12 @@ def source_revision():
     return result.stdout.strip()
 
 
-def collect_teacher(cfg,samples,episodes,seed,horizon):
+def collect_teacher(cfg,samples,episodes,seed,horizon,base_params=None):
     if samples<episodes or episodes<2:raise ValueError('Need at least two episodes and samples >= episodes')
     X=[];Y=[];groups=[];valid=[];diagnostics=[]
     per_episode=int(np.ceil(samples/episodes))
     for episode in range(episodes):
-        env=RigRLEnvV4(cfg=cfg,seed=seed+1009*episode);obs,_=env.reset()
+        env=RigRLEnvV4(base_params=base_params,cfg=cfg,seed=seed+1009*episode);obs,_=env.reset()
         # Use the same episode plant model as the LQR controller that anchors
         # this rollout, including any domain-randomized parameter draw.
         teacher=ConstrainedMPC(env.p,env.cp,MPCConfig(horizon=horizon,
@@ -125,13 +125,14 @@ def distill(X,Y,groups,valid,cfg,epochs,seed):
                   'heldout_episodes':heldout.tolist(),'excluded_fallback_labels':int((~valid).sum())}
 
 
-def train_ppo(model,cfg,args,outdir):
+def train_ppo(model,cfg,args,outdir,base_params=None):
     pc=PPOConfigV2(hidden_size=128,learning_rate=args.learning_rate,n_envs=args.envs,n_steps=args.rollout,
-                   anchor_kl_coef=args.anchor_kl,symmetry_coef=.025,epochs=3,gae_lambda=.98,entropy_coef=.0001,seed=args.seed)
+                   anchor_kl_coef=args.anchor_kl,symmetry_coef=args.symmetry_coef,
+                   epochs=args.ppo_epochs,gae_lambda=.98,entropy_coef=args.entropy_coef,seed=args.seed)
     anchor=type(model)(model.obs_dim,1,128);anchor.load_state_dict(model.state_dict());anchor.eval()
     for p in anchor.parameters():p.requires_grad_(False)
     optimizer=torch.optim.Adam(model.parameters(),lr=pc.learning_rate,eps=1e-5)
-    env=VectorRigEnvV4(pc.n_envs,args.seed,cfg);obs=torch.from_numpy(env.reset());steps=0;logs=[]
+    env=VectorRigEnvV4(pc.n_envs,args.seed,cfg,base_params=base_params);obs=torch.from_numpy(env.reset());steps=0;logs=[]
     while steps<args.steps:
         buffer=RolloutBufferV2(pc.n_steps,pc.n_envs,model.obs_dim,1,'cpu');infos_all=[]
         for t in range(pc.n_steps):
@@ -162,7 +163,9 @@ def train_ppo(model,cfg,args,outdir):
              'projection_fraction':float(np.mean([abs(i['requested_residual_accel']-i['effective_residual_accel'])>1e-6 for i in infos_all])),
              **diagnostics}
         logs.append(log);print('PPO',json.dumps(log),flush=True)
-        save_checkpoint_v2(outdir/f'policy_{steps:08d}.pt',model,pc,asdict(cfg),metadata(steps,'ppo',cfg=cfg))
+        save_checkpoint_v2(outdir/f'policy_{steps:08d}.pt',model,pc,asdict(cfg),
+                           metadata(steps,'ppo',cfg=cfg,
+                                    plant_parameters=asdict(base_params) if base_params else None))
     return pc,logs,steps
 
 
@@ -180,8 +183,13 @@ def main():
     ap.add_argument('--steps',type=int,default=65536);ap.add_argument('--envs',type=int,default=8)
     ap.add_argument('--rollout',type=int,default=256);ap.add_argument('--learning-rate',type=float,default=3e-4)
     ap.add_argument('--anchor-kl',type=float,default=.001)
+    ap.add_argument('--entropy-coef',type=float,default=.0001)
+    ap.add_argument('--symmetry-coef',type=float,default=.025)
+    ap.add_argument('--ppo-epochs',type=int,default=3)
     ap.add_argument('--energy-gate-weight',type=float,default=0.)
     ap.add_argument('--energy-gate-step-scale-mjs',type=float,default=1.)
+    ap.add_argument('--plant-overrides',type=Path,
+                    help='JSON mapping of PlantParams fields for a geometry sensitivity run')
     ap.add_argument('--reference-mode',choices=['random_segments','random_goal_hold'],default='random_segments')
     ap.add_argument('--episode-seconds',type=float)
     ap.add_argument('--goal-edge-margin-mm',type=float,default=15.)
@@ -190,7 +198,12 @@ def main():
     ap.add_argument('--goal-hold-extra-seconds',type=float,default=.5)
     ap.add_argument('--eval-seeds',nargs='*',type=int,default=[101,202,303]);ap.add_argument('--skip-evaluation',action='store_true')
     args=ap.parse_args();torch.set_num_threads(1);np.random.seed(args.seed);torch.manual_seed(args.seed)
-    if args.epochs<1 or args.steps<1 or args.envs<1 or args.rollout<2:raise ValueError('Training counts must be positive')
+    plant_overrides=json.loads(args.plant_overrides.read_text(encoding='utf-8')) if args.plant_overrides else {}
+    if not isinstance(plant_overrides,dict):raise ValueError('--plant-overrides must contain a JSON object')
+    base_params=PlantParams(**plant_overrides) if plant_overrides else None
+    if (args.epochs<1 or args.steps<1 or args.envs<1 or args.rollout<2 or
+            args.ppo_epochs<1 or args.entropy_coef<0 or args.symmetry_coef<0):
+        raise ValueError('Training counts and PPO regularization settings must be nonnegative/positive')
     out=args.outdir;out.mkdir(parents=True,exist_ok=True);started=time.time()
     step_dir=StepDirParams(
         max_velocity_rad_s=(55.0 if args.step_dir_max_velocity is None else args.step_dir_max_velocity),
@@ -223,8 +236,11 @@ def main():
             X,Y,groups,valid=[data[k] for k in ('observations','actions','episode','successful')]
             diagnostics=json.loads((args.dataset.parent/'teacher_solver.json').read_text())
         else:
-            X,Y,groups,valid,diagnostics=collect_teacher(cfg,args.samples,args.episodes,args.seed,args.horizon)
+            X,Y,groups,valid,diagnostics=collect_teacher(
+                cfg,args.samples,args.episodes,args.seed,args.horizon,base_params=base_params)
         teacher_config=source if args.dataset else {'env_config':asdict(cfg),'seed':args.seed,
+                    'plant_parameters':asdict(base_params) if base_params else None,
+                    'plant_overrides':plant_overrides,
                     'mpc_config':asdict(MPCConfig(horizon=args.horizon,physics_dt=cfg.physics_dt,
                         control_dt=cfg.control_dt,residual_accel_limit=cfg.residual_accel_limit,
                         actuator_mode=cfg.actuator_mode,step_dir=cfg.step_dir,
@@ -254,13 +270,15 @@ def main():
                                             max_acceleration_rad_s2=args.step_dir_max_acceleration))
         cfg=replace(cfg,energy_gate_weight=args.energy_gate_weight,
                     energy_gate_step_scale_mJs=args.energy_gate_step_scale_mjs)
-        pc,logs,steps=train_ppo(model,cfg,args,out)
+        pc,logs,steps=train_ppo(model,cfg,args,out,base_params=base_params)
         (out/'training.json').write_text(json.dumps(logs,indent=2))
     path=out/'policy_candidate.pt'
     revision=source_revision()
     elapsed=time.time()-started
     run_metadata=metadata(steps,args.mode,cfg=cfg,wall_seconds=elapsed,
-                          source_revision=revision,seed=args.seed)
+                          source_revision=revision,seed=args.seed,
+                          plant_parameters=asdict(base_params) if base_params else None,
+                          plant_overrides=plant_overrides)
     (out/'run_metadata.json').write_text(json.dumps({
         **run_metadata,
         'arguments':{key:(str(value) if isinstance(value,Path) else value)
@@ -272,7 +290,7 @@ def main():
     save_checkpoint_v2(path,model,pc,asdict(cfg),run_metadata)
     if not args.skip_evaluation:
         print('EVENT '+json.dumps({'phase':'evaluation'}),flush=True)
-        rows=evaluate(model,cfg,args.eval_seeds)
+        rows=evaluate(model,cfg,args.eval_seeds,base_params=base_params)
         decision=promotion(rows)
         result={'benchmark_version':'SEDP-V4-100HZ','config':asdict(cfg),'rows':rows,'promotion':decision}
         (out/'evaluation.json').write_text(json.dumps(result,indent=2))

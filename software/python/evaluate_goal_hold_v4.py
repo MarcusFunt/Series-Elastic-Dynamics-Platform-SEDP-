@@ -10,13 +10,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from active_vibration_rig_2d import PlantParams
 from constrained_mpc import ConstrainedMPC, MPCConfig
 from evaluate_v4 import load_policy, reference_preview
 from rig_rl_env_v4 import RigRLEnvV4
 
 
-def run_case(controller, seed, cfg, model=None, horizon=8, tolerance_mm=5.):
-    env=RigRLEnvV4(cfg=cfg,seed=seed)
+def run_case(controller, seed, cfg, model=None, horizon=8, tolerance_mm=5.,base_params=None):
+    env=RigRLEnvV4(base_params=base_params,cfg=cfg,seed=seed)
     obs,_=env.reset()
     if cfg.reference_mode!='random_goal_hold':
         raise ValueError('Checkpoint/environment must use the random_goal_hold reference')
@@ -128,16 +129,37 @@ def summarize(rows):
              p['saturation_fraction']<=.08 for p in policy)
     holds=all(p['completed_two_second_holds']==p['goal_count'] and p['goal_count']>0 for p in policy)
     mean_energy_ratio=float(np.mean(ratios))
+    mpc_ratios=[by[('policy',s)]['integrated_resonator_energy_mJs']/max(
+        by[('mpc',s)]['integrated_resonator_energy_mJs'],1e-9) for s in seeds]
+    mean_mpc_energy_ratio=float(np.mean(mpc_ratios))
+    mpc_tracking_ok=all(by[('policy',s)]['position_rmse_mm'] <=
+                         by[('mpc',s)]['position_rmse_mm']*1.02+.05 for s in seeds)
+    mpc_angle_ok=all(by[('policy',s)]['peak_angle_deg'] <=
+                     by[('mpc',s)]['peak_angle_deg']*1.02+.01 for s in seeds)
+    mpc_safe=all(by[('policy',s)]['terminated'] is False and
+                 by[('policy',s)]['exclusion_zone_violations']==0 and
+                 by[('policy',s)]['saturation_fraction']<=.08 for s in seeds)
+    mpc_holds=all(by[('policy',s)]['completed_two_second_holds']==
+                  by[('policy',s)]['goal_count'] and by[('policy',s)]['goal_count']>0
+                  for s in seeds)
     return {
         'policy_lqr_integrated_resonator_energy_ratio':mean_energy_ratio,
         'policy_mpc_integrated_resonator_energy_ratio':float(np.mean([
             by[('policy',s)]['integrated_resonator_energy_mJs']/max(
                 by[('mpc',s)]['integrated_resonator_energy_mJs'],1e-9)
             for s in seeds])),
+        'policy_mpc_energy_improvement_fraction':1.-mean_mpc_energy_ratio,
         'paired_tracking_gate':tracking_ok,'paired_peak_angle_gate':angle_ok,
         'safety_and_exclusion_gate':safe,'two_second_hold_gate':holds,
         'integrated_resonator_energy_improvement_at_least_5pct':mean_energy_ratio<.95,
         'accepted_vs_lqr':bool(safe and holds and tracking_ok and angle_ok and mean_energy_ratio<.95),
+        'paired_tracking_gate_vs_mpc':mpc_tracking_ok,
+        'paired_peak_angle_gate_vs_mpc':mpc_angle_ok,
+        'safety_and_exclusion_gate_vs_mpc':mpc_safe,
+        'two_second_hold_gate_vs_mpc':mpc_holds,
+        'integrated_resonator_energy_improvement_at_least_5pct_vs_mpc':mean_mpc_energy_ratio<.95,
+        'accepted_vs_mpc':bool(mpc_safe and mpc_holds and mpc_tracking_ok and
+                                mpc_angle_ok and mean_mpc_energy_ratio<.95),
     },result
 
 
@@ -148,17 +170,25 @@ def main():
     parser.add_argument('--seeds',nargs='*',type=int,default=[8011,8012,8013,8014,8015])
     parser.add_argument('--horizon',type=int,default=8)
     parser.add_argument('--tolerance-mm',type=float,default=5.)
+    parser.add_argument('--plant-overrides',type=Path,
+                        help='JSON mapping of PlantParams fields for a geometry sensitivity run')
     args=parser.parse_args()
     model,cfg,ck=load_policy(args.model)
     if cfg.reference_mode!='random_goal_hold':
         raise ValueError('Model checkpoint was not trained with --reference-mode random_goal_hold')
     cfg=replace(cfg,domain_randomization=True,initial_theta_std=math.radians(1.),
                 initial_theta_dot_std=math.radians(5.),kick_probability=1.)
+    plant_overrides=(json.loads(args.plant_overrides.read_text(encoding='utf-8'))
+                     if args.plant_overrides else
+                     ck.get('extra',{}).get('plant_overrides',{}))
+    if not isinstance(plant_overrides,dict):raise ValueError('--plant-overrides must contain a JSON object')
+    base_params=PlantParams(**plant_overrides) if plant_overrides else None
     rows=[]
     torch.set_num_threads(1)
     for seed in args.seeds:
         for controller in ('lqr','mpc','policy'):
-            result=run_case(controller,seed,cfg,model,args.horizon,args.tolerance_mm)
+            result=run_case(controller,seed,cfg,model,args.horizon,args.tolerance_mm,
+                             base_params=base_params)
             rows.append(result)
             print('EVENT '+json.dumps({'controller':controller,'seed':seed,
                                        'completed_holds':result['completed_two_second_holds'],
@@ -166,6 +196,7 @@ def main():
                                        'exclusion_violations':result['exclusion_zone_violations']}),flush=True)
     decision,summary=summarize(rows)
     output={'benchmark_version':'SEDP-V4-RANDOM-GOAL-HOLD','config':asdict(cfg),
+            'plant_overrides':plant_overrides,
             'checkpoint':str(args.model),'source_revision':ck.get('extra',{}).get('source_revision'),
             'hold_tolerance_mm':args.tolerance_mm,'rows':rows,'summary':summary,
             'promotion':decision}

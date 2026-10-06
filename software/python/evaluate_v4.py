@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, replace
 from pathlib import Path
 import numpy as np
-from active_vibration_rig_2d import Trajectory, MotionParams
+from active_vibration_rig_2d import PlantParams, Trajectory, MotionParams
 from benchmark_suite import SCENARIOS
 from rig_rl_env_v4 import RigRLEnvV4, RLEnvConfigV4
 from constrained_mpc import ConstrainedMPC, MPCConfig
@@ -20,13 +20,14 @@ def reference_preview(env,horizon):
     return [preview(env.t+k*env.cfg.control_dt) for k in range(horizon+1)]
 
 
-def run_case(controller, scenario=None, *, seed=0, cfg=None, model=None, horizon=8, randomized=False):
+def run_case(controller, scenario=None, *, seed=0, cfg=None, model=None, horizon=8,
+             randomized=False,base_params=None):
     cfg=replace(cfg or RLEnvConfigV4(),domain_randomization=randomized,
                 initial_theta_std=np.radians(1.) if randomized else 0.,
                 initial_theta_dot_std=np.radians(5.) if randomized else 0.,
                 kick_probability=1. if randomized else 0.,
                 episode_seconds=scenario.duration if scenario is not None else (cfg or RLEnvConfigV4()).episode_seconds)
-    env=RigRLEnvV4(cfg=cfg,seed=seed);obs,_=env.reset()
+    env=RigRLEnvV4(base_params=base_params,cfg=cfg,seed=seed);obs,_=env.reset()
     if scenario is not None:
         obs=env.set_reference(Trajectory(scenario.trajectory,MotionParams()))
     teacher=None
@@ -118,7 +119,7 @@ def run_case(controller, scenario=None, *, seed=0, cfg=None, model=None, horizon
 
 
 def evaluate(model=None,cfg=None,seeds=(101,202,303),include_mpc=False,horizon=8,
-             compare_mpc=False,scenarios=None):
+             compare_mpc=False,scenarios=None,base_params=None):
     rows=[]
     selected_scenarios=SCENARIOS if scenarios is None else tuple(scenarios)
     cases=[(sc,0,False) for sc in selected_scenarios]+[(None,int(seed),True) for seed in seeds]
@@ -127,7 +128,8 @@ def evaluate(model=None,cfg=None,seeds=(101,202,303),include_mpc=False,horizon=8
         for ctrl in ['lqr']+mpc_controllers+(['policy'] if model is not None else []):
             total_controllers=1+len(mpc_controllers)+int(model is not None)
             print('EVENT '+json.dumps({'phase':'evaluation','controller':ctrl,'case':scenario.name if scenario else 'random_reference','seed':seed,'completed_cases':len(rows),'total_cases':len(cases)*total_controllers}),flush=True)
-            rows.append(run_case(ctrl,scenario,seed=seed,cfg=cfg,model=model,horizon=horizon,randomized=randomized))
+            rows.append(run_case(ctrl,scenario,seed=seed,cfg=cfg,model=model,horizon=horizon,
+                                 randomized=randomized,base_params=base_params))
     return rows
 
 
@@ -229,12 +231,22 @@ def main():
     ap.add_argument('--compare-mpc',action='store_true',help='Compare pre-Phase-4 and tuned objective weights')
     ap.add_argument('--actuator-mode',choices=['torque','step_dir'],default='torque')
     ap.add_argument('--horizon',type=int,default=8);ap.add_argument('--seeds',nargs='*',type=int,default=[101,202,303])
-    ap.add_argument('--json',type=Path,required=True);args=ap.parse_args()
+    ap.add_argument('--json',type=Path,required=True)
+    ap.add_argument('--plant-overrides',type=Path,
+                    help='JSON mapping of PlantParams fields for a geometry sensitivity run')
+    args=ap.parse_args()
     model=None;cfg=RLEnvConfigV4(actuator_mode=args.actuator_mode)
-    if args.model:model,cfg,_=load_policy(args.model)
-    rows=evaluate(model,cfg,args.seeds,args.mpc,args.horizon,args.compare_mpc)
+    checkpoint={}
+    if args.model:model,cfg,checkpoint=load_policy(args.model)
+    plant_overrides=(json.loads(args.plant_overrides.read_text(encoding='utf-8'))
+                     if args.plant_overrides else
+                     checkpoint.get('extra',{}).get('plant_overrides',{}))
+    if not isinstance(plant_overrides,dict):raise ValueError('--plant-overrides must contain a JSON object')
+    base_params=PlantParams(**plant_overrides) if plant_overrides else None
+    rows=evaluate(model,cfg,args.seeds,args.mpc,args.horizon,args.compare_mpc,
+                  base_params=base_params)
     result={'benchmark_version':'SEDP-V4-100HZ','config':asdict(cfg),'horizon':args.horizon,
-            'rows':rows,'promotion':promotion(rows) if model else None,
+            'plant_overrides':plant_overrides,'rows':rows,'promotion':promotion(rows) if model else None,
             'mpc_comparison':mpc_comparison(rows) if args.compare_mpc else None}
     args.json.parent.mkdir(parents=True,exist_ok=True);args.json.write_text(json.dumps(result,indent=2))
     for r in rows: print(r)

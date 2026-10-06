@@ -152,8 +152,9 @@ class RigRLEnvV4(RigRLEnvV3):
 
 
 class VectorRigEnvV4:
-    def __init__(self,n_envs=8,seed=0,cfg=None):
-        self.envs=[RigRLEnvV4(cfg=cfg,seed=seed+1009*i) for i in range(n_envs)]
+    def __init__(self,n_envs=8,seed=0,cfg=None,base_params=None):
+        self.envs=[RigRLEnvV4(base_params=base_params,cfg=cfg,seed=seed+1009*i)
+                   for i in range(n_envs)]
         self.n_envs=n_envs; self.obs_dim=self.envs[0].observation_dim;self.action_dim=1
         self.reflection_signs=self.envs[0].reflection_signs
 
