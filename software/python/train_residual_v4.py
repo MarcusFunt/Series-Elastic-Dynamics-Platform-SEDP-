@@ -22,6 +22,32 @@ from evaluate_v4 import reference_preview,evaluate,promotion,load_policy
 SCHEMA='sedp-v4-estimated-context-history'
 
 
+def rollout_diagnostics(sampled_actions,mean_actions,infos,cfg):
+    """Summarize actions and reconstruct each unscaled transition reward."""
+    sampled=np.asarray(sampled_actions,dtype=float).reshape(-1)
+    means=np.asarray(mean_actions,dtype=float).reshape(-1)
+    executed=np.asarray([i['effective_residual_accel'] for i in infos],dtype=float)
+    costs={k:float(np.mean([i[k] for i in infos]))
+           for k in infos[0] if k.startswith('cost_')}
+    components={'alive_bonus':float(cfg.alive_bonus),
+                'energy_progress':float(np.mean([i['energy_progress_reward'] for i in infos])),
+                'termination_penalty':-50.*float(np.mean([i['terminated'] for i in infos])),
+                **{k:-v for k,v in costs.items()}}
+    reconstructed=np.asarray([cfg.alive_bonus+i['energy_progress_reward']
+                  -sum(v for k,v in i.items() if k.startswith('cost_'))
+                  -50.*i['terminated'] for i in infos])
+    actual=np.asarray([i['unscaled_reward'] for i in infos])
+    return {'action_sample_mean':float(sampled.mean()),
+            'action_sample_std':float(sampled.std()),
+            'action_mean':float(means.mean()),'action_mean_abs':float(np.abs(means).mean()),
+            'action_spread':float(means.std()),
+            'executed_residual_accel_mean':float(executed.mean()),
+            'executed_residual_accel_mean_abs':float(np.abs(executed).mean()),
+            'executed_residual_accel_std':float(executed.std()),
+            'reward_costs':costs,'reward_components':components,
+            'reward_reconstruction_error':float(np.max(np.abs(reconstructed-actual)))}
+
+
 def metadata(steps,mode,cfg=None,**kwargs):
     actuator_mode=cfg.actuator_mode if cfg is not None else 'torque'
     controller_timing=('held torque at control_dt' if actuator_mode=='torque' else
@@ -48,7 +74,9 @@ def collect_teacher(cfg,samples,episodes,seed,horizon):
     per_episode=int(np.ceil(samples/episodes))
     for episode in range(episodes):
         env=RigRLEnvV4(cfg=cfg,seed=seed+1009*episode);obs,_=env.reset()
-        teacher=ConstrainedMPC(env.base_params,env.cp,MPCConfig(horizon=horizon,
+        # Use the same episode plant model as the LQR controller that anchors
+        # this rollout, including any domain-randomized parameter draw.
+        teacher=ConstrainedMPC(env.p,env.cp,MPCConfig(horizon=horizon,
                     physics_dt=cfg.physics_dt,control_dt=cfg.control_dt,
                     residual_accel_limit=cfg.residual_accel_limit,
                     actuator_mode=cfg.actuator_mode,step_dir=cfg.step_dir,
@@ -119,12 +147,20 @@ def train_ppo(model,cfg,args,outdir):
         with torch.no_grad():last=model.value(obs)
         buffer.compute_gae(last,pc.gamma,pc.gae_lambda)
         loss=ppo_update_v2(model,optimizer,buffer,pc,anchor,env.reflection_signs)
-        returns=buffer.returns.flatten().numpy();values=buffer.values.flatten().numpy()
-        explained=1-float(np.var(returns-values))/max(float(np.var(returns)),1e-8)
-        log={'steps':steps,**loss,'explained_variance':explained,
+        returns=buffer.returns.flatten().numpy()
+        pre_update_values=buffer.values.flatten().numpy()
+        explained_pre=1-float(np.var(returns-pre_update_values))/max(float(np.var(returns)),1e-8)
+        with torch.no_grad():
+            updated_values=model.value(buffer.obs.reshape(-1,model.obs_dim)).numpy()
+        explained_post=1-float(np.var(returns-updated_values))/max(float(np.var(returns)),1e-8)
+        with torch.no_grad():
+            mean_actions=model.deterministic(buffer.obs.reshape(-1,model.obs_dim)).numpy()
+        diagnostics=rollout_diagnostics(buffer.actions.numpy(),mean_actions,infos_all,cfg)
+        log={'steps':steps,**loss,'explained_variance':explained_post,
+             'explained_variance_pre_update':explained_pre,
              'mean_reward':float(buffer.rewards.mean()),
              'projection_fraction':float(np.mean([abs(i['requested_residual_accel']-i['effective_residual_accel'])>1e-6 for i in infos_all])),
-             'reward_costs':{k:float(np.mean([i[k] for i in infos_all])) for k in infos_all[0] if k.startswith('cost_')}}
+             **diagnostics}
         logs.append(log);print('PPO',json.dumps(log),flush=True)
         save_checkpoint_v2(outdir/f'policy_{steps:08d}.pt',model,pc,asdict(cfg),metadata(steps,'ppo',cfg=cfg))
     return pc,logs,steps
@@ -142,8 +178,10 @@ def main():
     ap.add_argument('--step-dir-max-velocity',type=float)
     ap.add_argument('--step-dir-max-acceleration',type=float)
     ap.add_argument('--steps',type=int,default=65536);ap.add_argument('--envs',type=int,default=8)
-    ap.add_argument('--rollout',type=int,default=256);ap.add_argument('--learning-rate',type=float,default=3e-5)
-    ap.add_argument('--anchor-kl',type=float,default=.005)
+    ap.add_argument('--rollout',type=int,default=256);ap.add_argument('--learning-rate',type=float,default=3e-4)
+    ap.add_argument('--anchor-kl',type=float,default=.001)
+    ap.add_argument('--energy-gate-weight',type=float,default=0.)
+    ap.add_argument('--energy-gate-step-scale-mjs',type=float,default=1.)
     ap.add_argument('--eval-seeds',nargs='*',type=int,default=[101,202,303]);ap.add_argument('--skip-evaluation',action='store_true')
     args=ap.parse_args();torch.set_num_threads(1);np.random.seed(args.seed);torch.manual_seed(args.seed)
     if args.epochs<1 or args.steps<1 or args.envs<1 or args.rollout<2:raise ValueError('Training counts must be positive')
@@ -195,6 +233,8 @@ def main():
         if args.init and args.step_dir_max_acceleration is not None:
             cfg=replace(cfg,step_dir=replace(cfg.step_dir,
                                             max_acceleration_rad_s2=args.step_dir_max_acceleration))
+        cfg=replace(cfg,energy_gate_weight=args.energy_gate_weight,
+                    energy_gate_step_scale_mJs=args.energy_gate_step_scale_mjs)
         pc,logs,steps=train_ppo(model,cfg,args,out)
         (out/'training.json').write_text(json.dumps(logs,indent=2))
     path=out/'policy_candidate.pt'

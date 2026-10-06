@@ -52,6 +52,11 @@ class MPCConfig:
     terminal_multiplier: float = 2.
     action_weight: float = .03
     slew_weight: float = .06
+    # Optional per-step bound relative to the nominal LQR rollout. When set,
+    # MPC may improve angle/energy only while keeping tracking within this
+    # absolute position-error margin of the base controller.
+    tracking_nonregression_margin_m: float | None = None
+    angle_nonregression_margin_rad: float | None = None
     actuator_mode: str = 'torque'
     step_dir: StepDirParams = None
     command_delay: float = 0.
@@ -88,6 +93,14 @@ class MPCConfig:
                    self.action_weight, self.slew_weight)
         if not all(math.isfinite(v) and v >= 0 for v in weights):
             raise ValueError('MPC objective weights must be finite and nonnegative')
+        if (self.tracking_nonregression_margin_m is not None
+                and (not math.isfinite(self.tracking_nonregression_margin_m)
+                     or self.tracking_nonregression_margin_m < 0)):
+            raise ValueError('tracking_nonregression_margin_m must be finite and nonnegative or None')
+        if (self.angle_nonregression_margin_rad is not None
+                and (not math.isfinite(self.angle_nonregression_margin_rad)
+                     or self.angle_nonregression_margin_rad < 0)):
+            raise ValueError('angle_nonregression_margin_rad must be finite and nonnegative or None')
         scales=(self.tracking_scale,self.velocity_scale,self.angle_scale,self.angular_rate_scale,
                 self.residual_accel_limit)
         if not all(math.isfinite(v) and v > 0 for v in scales):
@@ -538,6 +551,16 @@ class ConstrainedMPC:
             target = np.zeros(dim)
             target[2] = refs[k + 1, 0]
             target[3] = refs[k + 1, 1]
+            if c.tracking_nonregression_margin_m is not None:
+                nominal_tracking_error = abs(nominal_z[k + 1][2] - target[2])
+                tracking_bound = nominal_tracking_error + c.tracking_nonregression_margin_m
+                constrain(S[2], target[2] - tracking_bound - offset[2],
+                          target[2] + tracking_bound - offset[2])
+            if c.angle_nonregression_margin_rad is not None:
+                angle_bound = (abs(nominal_z[k + 1][4])
+                               + c.angle_nonregression_margin_rad)
+                constrain(S[4], -angle_bound - offset[4],
+                          angle_bound - offset[4])
             weight = c.terminal_multiplier if k == n - 1 else 1.
             H += weight * (S.T @ Q @ S)
             g += weight * (S.T @ Q @ (offset - target))
@@ -629,7 +652,7 @@ class ConstrainedMPC:
         accepted, outcome, reason, nonlinear = self._nonlinear_accept(
             y, refs, candidate, sources, fixed, base, step_dir_actuator, time_s,
             kick_torque, kick_at, kick_duration, torque_limit, max_motor_speed,
-            deadline)
+            deadline, nominal_z=nominal_z)
         if not accepted:
             return self._fallback(started, outcome, reason, base, result=result,
                                   violation=violation, nonlinear=nonlinear)
@@ -664,7 +687,8 @@ class ConstrainedMPC:
 
     def _nonlinear_accept(self, y, refs, candidate, sources, fixed, base,
                           step_dir_actuator, time_s, kick_torque, kick_at,
-                          kick_duration, torque_limit, max_motor_speed, deadline=None):
+                          kick_duration, torque_limit, max_motor_speed, deadline=None,
+                          nominal_z=None):
         c, p, cp = self.cfg, self.p, self.cp
         current = self._augmented_state(y, step_dir_actuator)
         actuator = deepcopy(step_dir_actuator) if step_dir_actuator is not None else StepDirActuator(c.step_dir)
@@ -760,6 +784,26 @@ class ConstrainedMPC:
             violations = observe_state(current[:7])
             if violates_tolerance(violations):
                 return False, 'nonlinear_state_rejection', 'nonlinear rail or speed check', rejection_diagnostics(violations)
+            if c.tracking_nonregression_margin_m is not None and nominal_z is not None:
+                target_position = float(refs[k + 1, 0])
+                nominal_error = abs(float(nominal_z[k + 1][2]) - target_position)
+                actual_error = abs(float(current[2]) - target_position)
+                excess = actual_error - nominal_error - c.tracking_nonregression_margin_m
+                if excess > 1e-6:
+                    return False, 'nonlinear_tracking_rejection', (
+                        'nonlinear rollout exceeds the LQR tracking-error envelope'), {
+                            'nonlinear_peak_rail_fraction': peak_rail,
+                            'nonlinear_max_constraint_violation': excess,
+                        }
+            if c.angle_nonregression_margin_rad is not None and nominal_z is not None:
+                excess = (abs(float(current[4])) - abs(float(nominal_z[k + 1][4]))
+                          - c.angle_nonregression_margin_rad)
+                if excess > 1e-6:
+                    return False, 'nonlinear_angle_rejection', (
+                        'nonlinear rollout exceeds the LQR angle envelope'), {
+                            'nonlinear_peak_rail_fraction': peak_rail,
+                            'nonlinear_max_constraint_violation': excess,
+                        }
         self._check_deadline(deadline)
         return True, 'success', '', {
             'nonlinear_peak_rail_fraction': peak_rail,

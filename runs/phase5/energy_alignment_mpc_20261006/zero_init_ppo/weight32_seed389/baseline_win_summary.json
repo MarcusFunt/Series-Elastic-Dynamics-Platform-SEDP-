@@ -1,0 +1,55 @@
+{
+  "status": "accepted_on_development_and_independent_confirmation",
+  "checkpoint": "C:\\Users\\marcu\\OneDrive\\Dokumenter\\GitHub\\Series-Elastic-Dynamics-Platform-SEDP-\\runs\\phase5\\energy_alignment_mpc_20261006\\zero_init_ppo\\weight32_seed389\\policy_candidate.pt",
+  "checkpoint_sha256": "5d7ef2805c9c016c38c98b3757ac876b8118a1087c2d9a07544912d69c23f30f",
+  "training": {
+    "seed": 389,
+    "steps": 65536,
+    "initialization": "zero_residual_actor_critic",
+    "energy_gate_weight": 32.0,
+    "energy_gate_step_scale_mjs": 0.0025861015040505603,
+    "learning_rate": 0.0003,
+    "anchor_kl": 0.001,
+    "environment_residual_accel_limit": 2.5,
+    "mpc_use": "repository MPC compared directly and was used in the surrounding energy-alignment pilot/teacher study; selected zero-init PPO checkpoint is evaluated alongside it"
+  },
+  "development": {
+    "seeds": [
+      1001,
+      1002,
+      1003
+    ],
+    "accepted": true,
+    "mean_energy_ratio": 0.9317206285705759,
+    "reasons": []
+  },
+  "independent_confirmation": {
+    "seeds": [
+      8001,
+      8002,
+      8003
+    ],
+    "accepted": true,
+    "mean_energy_ratio": 0.9243841507871053,
+    "reasons": []
+  },
+  "repository_mpc_comparison": {
+    "candidate_to_mpc_energy_ratio": 0.5165353778147951,
+    "candidate_energy_reduction_vs_mpc_pct": 48.34646221852049,
+    "mpc_mean_p95_solve_ms": 8.994870799748846,
+    "mpc_mean_fallback_fraction": 0.19355555555555556
+  },
+  "source_revision_recorded_by_trainer": "36ee7c3af0bc09081101c8a437d3e96f8c0ef5a9",
+  "source_file_sha256": {
+    "software\\python\\train_residual_v4.py": "3198a7a21a2c05816bd59c6f02dc89d90ea80b031d153bbbbae165a5af655124",
+    "software\\python\\ppo_agent_v2.py": "27d1773bad01bdd00d0d3671a19f9ff1aef14663d7a171c5a3e18a4943014924",
+    "software\\python\\rig_rl_env_v4.py": "655c911c5e901ddabce0f2e0871802b723ae5711237dc29896de3b896a289f15",
+    "software\\python\\evaluate_v4.py": "d72b765c2ed3061e403ab25a069257bcc3c8f7d831339aac9e460a2022def967",
+    "software\\python\\constrained_mpc.py": "3bc27675d063967675e3769badd63259acf5332ad707ff092184fb4e5799ba3e",
+    "software\\python\\run_energy_alignment_study.py": "94c400a108fccc462d4fcfee594d39f7be3bebf36dab158324a9e37d3363ba8c"
+  },
+  "evaluation_files": [
+    "C:\\Users\\marcu\\OneDrive\\Dokumenter\\GitHub\\Series-Elastic-Dynamics-Platform-SEDP-\\runs\\phase5\\energy_alignment_mpc_20261006\\zero_init_ppo\\weight32_seed389\\evaluation_dev.json",
+    "C:\\Users\\marcu\\OneDrive\\Dokumenter\\GitHub\\Series-Elastic-Dynamics-Platform-SEDP-\\runs\\phase5\\energy_alignment_mpc_20261006\\zero_init_ppo\\weight32_seed389\\evaluation_confirm_8001_8003.json"
+  ]
+}

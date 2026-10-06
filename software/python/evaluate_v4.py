@@ -39,7 +39,11 @@ def run_case(controller, scenario=None, *, seed=0, cfg=None, model=None, horizon
                 residual_accel_limit=cfg.residual_accel_limit))
         else:
             mpc_options = MPC_TUNED_WEIGHTS
-            teacher=ConstrainedMPC(env.base_params,env.cp,MPCConfig(
+            # Match the plant model used by env.loop.controller. Under domain
+            # randomization that controller is built from env.p, not the
+            # nominal env.base_params; using nominal MPC parameters would give
+            # the paired LQR baseline privileged model accuracy.
+            teacher=ConstrainedMPC(env.p,env.cp,MPCConfig(
                 horizon=horizon,physics_dt=cfg.physics_dt,control_dt=cfg.control_dt,
                 residual_accel_limit=cfg.residual_accel_limit,actuator_mode=cfg.actuator_mode,
                 step_dir=cfg.step_dir,command_delay=cfg.command_delay,

@@ -21,11 +21,17 @@ class RLEnvConfigV4(RLEnvConfigV3):
     preview_enabled: bool = True
     observation_noise_std: float = 0.
     reward_scale: float = .02
+    energy_gate_weight: float = 0.
+    energy_gate_step_scale_mJs: float = 1.
 
     def __post_init__(self):
         super().__post_init__()
         if self.history_length < 1: raise ValueError('history_length must be positive')
         if self.reward_scale<=0: raise ValueError('reward_scale must be positive')
+        if not math.isfinite(self.energy_gate_weight) or self.energy_gate_weight < 0:
+            raise ValueError('energy_gate_weight must be finite and nonnegative')
+        if not math.isfinite(self.energy_gate_step_scale_mJs) or self.energy_gate_step_scale_mJs <= 0:
+            raise ValueError('energy_gate_step_scale_mJs must be finite and positive')
         if self.residual_accel_limit <= 0: raise ValueError('residual_accel_limit must be positive')
         self.sensor_timing=normalize_sensor_timing(
             self.sensor_timing,self.control_dt,self.linear_encoder,self.physics_dt)
@@ -39,6 +45,14 @@ class RigRLEnvV4(RigRLEnvV3):
         self.loop=None
 
     def _base_accel(self, ref): return self.loop.base_accel(ref)
+
+    def _reward(self,a,ref,base,residual):
+        reward,costs,pred,progress=super()._reward(a,ref,base,residual)
+        # evaluate_v4 integrates this same post-transition energy sample.
+        increment_mJs=self._energy()*self.cfg.control_dt*1000.
+        gate_cost=self.cfg.energy_gate_weight*increment_mJs/self.cfg.energy_gate_step_scale_mJs
+        costs['gate_energy']=gate_cost
+        return reward-gate_cost,costs,pred,progress
 
     def _observation(self, ref):
         # Called once at reset by the inherited reset routine.

@@ -98,13 +98,24 @@ def ppo_update_v2(model,optimizer,buffer,cfg: PPOConfigV2,anchor:Optional[ActorC
             else:
                 nn.utils.clip_grad_norm_(model.parameters(),cfg.max_grad_norm)
             optimizer.step()
-            with torch.no_grad(): logratio=lp-oldlp[mb]; ak=(torch.exp(logratio)-1-logratio).mean(); cf=((ratio-1).abs()>cfg.clip_ratio).float().mean()
+            with torch.no_grad():
+                updated_lp,_,_=model.evaluate_actions(obs[mb],actions[mb])
+                logratio=updated_lp-oldlp[mb]
+                updated_ratio=torch.exp(logratio)
+                ak=(updated_ratio-1-logratio).mean()
+                cf=((updated_ratio-1).abs()>cfg.clip_ratio).float().mean()
             vals=[pl,vl,em,ak,cf,anchor_kl,sym]
             for k,v in zip(L,vals): L[k]+=float(v.detach())
             count+=1
             if float(ak)>1.5*cfg.target_kl: stop=True; break
         if stop: break
     for k in L: L[k]/=max(1,count)
+    with torch.no_grad():
+        final_lp,_,_=model.evaluate_actions(obs,actions)
+        final_logratio=final_lp-oldlp
+        final_ratio=torch.exp(final_logratio)
+        L['kl']=float((final_ratio-1-final_logratio).mean())
+        L['clipfrac']=float(((final_ratio-1).abs()>cfg.clip_ratio).float().mean())
     return L
 
 def load_v1_into_v2(path:Path,device='cpu'):

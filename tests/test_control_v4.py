@@ -5,6 +5,44 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'software/python'))
 
 class ControlV4Tests(unittest.TestCase):
+    def test_gate_energy_reward_matches_evaluation_increment(self):
+        from rig_rl_env_v4 import RigRLEnvV4, RLEnvConfigV4
+
+        common=dict(domain_randomization=False,kick_probability=0,
+                    initial_theta_std=0,initial_theta_dot_std=0,sensor_noise=False)
+        baseline=RigRLEnvV4(cfg=RLEnvConfigV4(**common),seed=7)
+        aligned=RigRLEnvV4(cfg=RLEnvConfigV4(**common,
+            energy_gate_weight=.7,energy_gate_step_scale_mJs=.1),seed=7)
+        baseline.reset();aligned.reset()
+        for action in (.1,-.2,0.):
+            _,old_reward,_,_,old_info=baseline.step([action])
+            _,new_reward,_,_,info=aligned.step([action])
+            self.assertAlmostEqual(info['energy'],old_info['energy'])
+            increment=info['energy']*aligned.cfg.control_dt*1000
+            expected_cost=.7*increment/.1
+            self.assertAlmostEqual(info['cost_gate_energy'],expected_cost)
+            self.assertAlmostEqual(old_reward-new_reward,
+                                   expected_cost*aligned.cfg.reward_scale)
+
+    def test_rollout_diagnostics_reconcile_reward_and_executed_residual(self):
+        from train_residual_v4 import rollout_diagnostics
+        from rig_rl_env_v4 import RLEnvConfigV4
+
+        cfg=RLEnvConfigV4()
+        infos=[{'requested_residual_accel':.1,'effective_residual_accel':.08,
+                'energy_progress_reward':.3,'cost_pos':.4,'cost_gate_energy':.2,
+                'unscaled_reward':cfg.alive_bonus-.4-.2+.3,'terminated':False},
+               {'requested_residual_accel':-.1,'effective_residual_accel':-.05,
+                'energy_progress_reward':-.1,'cost_pos':.2,'cost_gate_energy':.1,
+                'unscaled_reward':cfg.alive_bonus-.2-.1-.1-50.,'terminated':True}]
+        stats=rollout_diagnostics(np.array([[.2],[-.4]]),
+                                  np.array([[.1],[-.3]]),infos,cfg)
+        self.assertAlmostEqual(stats['action_sample_mean'],-.1)
+        self.assertAlmostEqual(stats['action_mean_abs'],.2)
+        self.assertAlmostEqual(stats['executed_residual_accel_mean_abs'],.065)
+        self.assertAlmostEqual(stats['reward_components']['termination_penalty'],-25.)
+        self.assertAlmostEqual(stats['reward_reconstruction_error'],0.)
+
     def test_measurements_do_not_expose_true_torque_or_carriage(self):
         from state_estimator import MeasurementModel
         from active_vibration_rig_2d import PlantParams
