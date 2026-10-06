@@ -77,7 +77,7 @@ def run_case(controller, seed, cfg, model=None, horizon=8, tolerance_mm=5.):
     energy=float(np.sum(a[:,4])*cfg.control_dt*1000.)
     return {
         'controller':controller,'seed':int(seed),'steps':len(a),'terminated':terminated,
-        'energy_integral_mJs':energy,
+        'integrated_resonator_energy_mJs':energy,
         'position_rmse_mm':float(np.sqrt(np.mean(np.square((a[:,1]-a[:,2])*1000.)))),
         'angle_rms_deg':float(np.degrees(np.sqrt(np.mean(np.square(a[:,3]))))),
         'peak_angle_deg':float(np.degrees(np.max(np.abs(a[:,3])))),
@@ -103,7 +103,8 @@ def summarize(rows):
     for ctrl in ('lqr','mpc','policy'):
         group=[by[(ctrl,s)] for s in seeds]
         result[ctrl]={
-            'mean_energy_integral_mJs':float(np.mean([r['energy_integral_mJs'] for r in group])),
+            'mean_integrated_resonator_energy_mJs':float(np.mean([
+                r['integrated_resonator_energy_mJs'] for r in group])),
             'mean_position_rmse_mm':float(np.mean([r['position_rmse_mm'] for r in group])),
             'mean_angle_rms_deg':float(np.mean([r['angle_rms_deg'] for r in group])),
             'mean_peak_angle_deg':float(np.mean([r['peak_angle_deg'] for r in group])),
@@ -119,7 +120,8 @@ def summarize(rows):
 
     policy=[by[('policy',s)] for s in seeds]
     lqr=[by[('lqr',s)] for s in seeds]
-    ratios=[p['energy_integral_mJs']/max(b['energy_integral_mJs'],1e-9) for p,b in zip(policy,lqr)]
+    ratios=[p['integrated_resonator_energy_mJs']/max(b['integrated_resonator_energy_mJs'],1e-9)
+            for p,b in zip(policy,lqr)]
     tracking_ok=all(p['position_rmse_mm']<=b['position_rmse_mm']*1.02+.05 for p,b in zip(policy,lqr))
     angle_ok=all(p['peak_angle_deg']<=b['peak_angle_deg']*1.02+.01 for p,b in zip(policy,lqr))
     safe=all(p['terminated'] is False and p['exclusion_zone_violations']==0 and
@@ -127,13 +129,14 @@ def summarize(rows):
     holds=all(p['completed_two_second_holds']==p['goal_count'] and p['goal_count']>0 for p in policy)
     mean_energy_ratio=float(np.mean(ratios))
     return {
-        'policy_lqr_energy_ratio':mean_energy_ratio,
-        'policy_mpc_energy_ratio':float(np.mean([
-            by[('policy',s)]['energy_integral_mJs']/max(by[('mpc',s)]['energy_integral_mJs'],1e-9)
+        'policy_lqr_integrated_resonator_energy_ratio':mean_energy_ratio,
+        'policy_mpc_integrated_resonator_energy_ratio':float(np.mean([
+            by[('policy',s)]['integrated_resonator_energy_mJs']/max(
+                by[('mpc',s)]['integrated_resonator_energy_mJs'],1e-9)
             for s in seeds])),
         'paired_tracking_gate':tracking_ok,'paired_peak_angle_gate':angle_ok,
         'safety_and_exclusion_gate':safe,'two_second_hold_gate':holds,
-        'energy_improvement_at_least_5pct':mean_energy_ratio<.95,
+        'integrated_resonator_energy_improvement_at_least_5pct':mean_energy_ratio<.95,
         'accepted_vs_lqr':bool(safe and holds and tracking_ok and angle_ok and mean_energy_ratio<.95),
     },result
 
