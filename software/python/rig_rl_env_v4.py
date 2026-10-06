@@ -50,7 +50,12 @@ class RigRLEnvV4(RigRLEnvV3):
         reward,costs,pred,progress=super()._reward(a,ref,base,residual)
         # evaluate_v4 integrates this same post-transition energy sample.
         increment_mJs=self._energy()*self.cfg.control_dt*1000.
-        gate_cost=self.cfg.energy_gate_weight*increment_mJs/self.cfg.energy_gate_step_scale_mJs
+        gate_active=1.0
+        if (self.cfg.reference_mode=='random_goal_hold' and
+                self.cfg.goal_energy_gate_hold_only):
+            gate_active=float(self.t-self.reference.t0 >= self.reference.Tmove-1e-9)
+        gate_cost=(self.cfg.energy_gate_weight*increment_mJs*gate_active/
+                   self.cfg.energy_gate_step_scale_mJs)
         costs['gate_energy']=gate_cost
         return reward-gate_cost,costs,pred,progress
 

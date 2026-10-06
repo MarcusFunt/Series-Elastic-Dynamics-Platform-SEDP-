@@ -46,6 +46,7 @@ class RLEnvConfigV3:
     goal_move_seconds: float = 1.0
     goal_hold_min_seconds: float = 2.5
     goal_hold_extra_seconds: float = 0.5
+    goal_energy_gate_hold_only: bool = True
 
     domain_randomization: bool = True
     mass_factor: Tuple[float,float] = (0.86, 1.18)
