@@ -1,0 +1,151 @@
+{
+  "project": {
+    "name": "Series-Elastic Dynamics Platform",
+    "acronym": "SEDP",
+    "maturity": "simulation-first",
+    "hardwareStatus": "not-built-or-validated",
+    "description": "A compliant carriage platform for active vibration control, elastic force sensing, haptics, system identification, and learned control."
+  },
+  "subsystems": [
+    {
+      "id": "rig-simulation",
+      "name": "Rig simulator",
+      "group": "Dynamics",
+      "status": "live-simulation",
+      "summary": "Interactive nonlinear Python plant with live SVG mechanism, trajectory controls, actuator state, and traces.",
+      "sources": ["browser-ui", "python-plant", "project-overview"],
+      "evidence": [],
+      "visualizations": ["live-mechanism", "live-time-series"]
+    },
+    {
+      "id": "digital-twin",
+      "name": "Digital twin",
+      "group": "Dynamics",
+      "status": "simulation-and-source",
+      "summary": "Reduced and nonlinear Python models plus an OpenModelica twin; physical parameters still need rig identification.",
+      "sources": ["math-model", "python-plant", "system-model", "openmodelica", "physics-validation"],
+      "evidence": ["physics-validation"],
+      "visualizations": ["model-comparison", "parameter-map", "physics-validation"]
+    },
+    {
+      "id": "controls-mpc",
+      "name": "Control lab",
+      "group": "Control",
+      "status": "simulation-and-evidence",
+      "summary": "Compare servo, active damping, LQR, constrained MPC, and learned residual policies using matched stored scenarios where available.",
+      "sources": ["project-overview", "math-model", "residual-v4", "async-timing", "constrained-mpc", "benchmark-implementation"],
+      "evidence": ["benchmark-b1", "mpc-reference", "mpc-phase4", "goal-hold-confirmation"],
+      "visualizations": ["controller-comparison", "mpc-solver-metrics"]
+    },
+    {
+      "id": "sensors-timing",
+      "name": "Sensors & timing",
+      "group": "Runtime",
+      "status": "simulated-and-designed",
+      "summary": "Sensor noise, asynchronous sample timing, delayed commands, and EKF estimation are represented in simulation; hardware measurements are not available.",
+      "sources": ["firmware", "hardware", "async-timing", "residual-v4", "goal-hold-readme", "state-estimator", "timing-implementation"],
+      "evidence": ["goal-hold-confirmation"],
+      "visualizations": ["sensor-flow", "timing-plan", "simulated-channel-config"]
+    },
+    {
+      "id": "learning-experiments",
+      "name": "Learning & experiments",
+      "group": "Learning",
+      "status": "recorded-and-runnable",
+      "summary": "Local v4 training controls plus historical PPO generations, distillation, evaluation, and random-goal-and-hold results.",
+      "sources": ["residual-v4", "phase5-plan", "goal-hold-readme", "artifacts", "train-v4", "env-v4", "policy-v4", "eval-v4", "rl-v3", "rl-v2"],
+      "evidence": ["goal-hold-confirmation", "goal-hold-development", "goal-hold-training", "goal-hold-metadata", "ppo-training", "ppo-ablation", "teacher-fit", "teacher-40-epochs"],
+      "visualizations": ["training-progress", "goal-sequence", "paired-metrics", "promotion-gates"]
+    },
+    {
+      "id": "benchmarks-evidence",
+      "name": "Benchmarks & evidence",
+      "group": "Learning",
+      "status": "recorded",
+      "summary": "Versioned B1, V4, Phase 5, physics validation, and MPC evidence with source and configuration provenance.",
+      "sources": ["artifacts", "residual-v4", "phase5-plan"],
+      "evidence": ["benchmark-b1", "physics-validation", "mpc-reference", "mpc-phase4", "ppo-4096", "ppo-training", "ppo-ablation"],
+      "visualizations": ["benchmark-table", "metric-comparison", "evidence-catalog"]
+    },
+    {
+      "id": "hardware-firmware",
+      "name": "Hardware & firmware",
+      "group": "Physical system",
+      "status": "planned-no-telemetry",
+      "summary": "Mechanical/electrical design, RP2350 core partition, PIO motion generation, rate targets, and safety path; no validated physical rig or telemetry yet.",
+      "sources": ["hardware", "firmware", "system-model", "readme"],
+      "evidence": [],
+      "visualizations": ["mechanical-stack", "electronics-map", "firmware-flow", "safety-path"]
+    },
+    {
+      "id": "haptics",
+      "name": "Haptics",
+      "group": "Applications",
+      "status": "design-stage",
+      "summary": "Spring-deflection force sensing is the basis for virtual centering, damping, detents, stops, vibration, and remote-force feedback; physical behavior remains unvalidated.",
+      "sources": ["project-overview", "hardware", "system-model"],
+      "evidence": [],
+      "visualizations": ["force-feedback-flow", "haptic-modes"]
+    },
+    {
+      "id": "system-identification",
+      "name": "System identification",
+      "group": "Validation",
+      "status": "planned-physical-calibration",
+      "summary": "The model parameters and dead-weight force calibration procedure are documented; assembled-rig measurements have not been recorded.",
+      "sources": ["hardware", "math-model", "readme", "physics-validation"],
+      "evidence": ["physics-validation"],
+      "visualizations": ["parameter-status", "calibration-workflow"]
+    }
+  ],
+  "sources": [
+    {"id":"readme","name":"Project README","path":"README.md","type":"markdown"},
+    {"id":"project-overview","name":"Project overview","path":"docs/PROJECT_OVERVIEW.md","type":"markdown"},
+    {"id":"math-model","name":"Mathematical model","path":"docs/MATHEMATICAL_MODEL.md","type":"markdown"},
+    {"id":"hardware","name":"Hardware design","path":"docs/HARDWARE.md","type":"markdown"},
+    {"id":"firmware","name":"Firmware architecture","path":"docs/FIRMWARE.md","type":"markdown"},
+    {"id":"openmodelica","name":"OpenModelica model","path":"docs/OPENMODELICA.md","type":"markdown"},
+    {"id":"openmodelica-model","name":"OpenModelica equations","path":"openmodelica/ActiveVibrationRig.mo","type":"modelica"},
+    {"id":"modelica-parameters","name":"OpenModelica parameter set","path":"openmodelica/PARAMETERS.csv","type":"csv"},
+    {"id":"modelica-examples","name":"OpenModelica simulation script","path":"openmodelica/simulate.mos","type":"text"},
+    {"id":"system-model","name":"System model YAML","path":"docs/SYSTEM_MODEL.yaml","type":"text"},
+    {"id":"async-timing","name":"Asynchronous timing model","path":"docs/control/ASYNC_TIMING.md","type":"markdown"},
+    {"id":"python-plant","name":"Nonlinear Python plant source","path":"software/python/active_vibration_rig_2d.py","type":"python"},
+    {"id":"constrained-mpc","name":"Constrained MPC implementation","path":"software/python/constrained_mpc.py","type":"python"},
+    {"id":"state-estimator","name":"State estimator implementation","path":"software/python/state_estimator.py","type":"python"},
+    {"id":"timing-implementation","name":"Sensor and command timing models","path":"software/python/timing_models.py","type":"python"},
+    {"id":"benchmark-implementation","name":"Benchmark acceptance gates","path":"software/python/benchmark_suite.py","type":"python"},
+    {"id":"train-v4","name":"Residual PPO v4 training workflow","path":"software/python/train_residual_v4.py","type":"python"},
+    {"id":"env-v4","name":"Residual PPO v4 environment","path":"software/python/rig_rl_env_v4.py","type":"python"},
+    {"id":"policy-v4","name":"Residual PPO v4 policy adapter","path":"software/python/rig_rl_policy_v4.py","type":"python"},
+    {"id":"eval-v4","name":"Residual PPO v4 evaluation","path":"software/python/evaluate_v4.py","type":"python"},
+    {"id":"rl-v3","name":"Residual PPO v3 formulation","path":"docs/RL_FORMULATION_V3.md","type":"markdown"},
+    {"id":"rl-v2","name":"Superseded residual PPO v2 formulation","path":"docs/RL_FORMULATION_V2.md","type":"markdown"},
+    {"id":"browser-ui","name":"Browser UI guide","path":"docs/BROWSER_UI.md","type":"markdown"},
+    {"id":"residual-v4","name":"Residual control v4","path":"docs/control/RESIDUAL_V4.md","type":"markdown"},
+    {"id":"phase5-plan","name":"PPO Phase 5 plan","path":"docs/control/PPO_PHASE5_PLAN.md","type":"markdown"},
+    {"id":"artifacts","name":"Artifact policy","path":"docs/ARTIFACTS.md","type":"markdown"},
+    {"id":"physics-validation","name":"Physics validation report","path":"docs/control/PHYSICS_VALIDATION.md","type":"markdown"},
+    {"id":"goal-hold-readme","name":"Random goal-hold study notes","path":"docs/control/evidence/random_goal_hold_20261006/README.md","type":"markdown"}
+  ],
+  "evidence": [
+    {"id":"benchmark-b1","name":"SEDP-B1 fixed benchmark","kind":"benchmark","path":"docs/benchmark_B1_fixed.json","dataType":"b1"},
+    {"id":"physics-validation","name":"Model physics validation","kind":"validation","path":"docs/control/evidence/physics_validation.json","dataType":"physics"},
+    {"id":"mpc-reference","name":"MPC reference","kind":"controller-reference","path":"docs/control/evidence/mpc_reference.json","dataType":"generic"},
+    {"id":"mpc-phase4","name":"MPC Phase 4 evaluation","kind":"controller-evaluation","path":"docs/control/evidence/mpc_phase4.json","dataType":"generic"},
+    {"id":"ppo-4096","name":"PPO v4 pilot","kind":"evaluation","path":"docs/control/evidence/ppo_4096.json","dataType":"generic"},
+    {"id":"ppo-training","name":"PPO training metrics","kind":"training","path":"docs/control/evidence/ppo_training.json","dataType":"generic"},
+    {"id":"ppo-ablation","name":"PPO ablation study","kind":"study","path":"docs/control/evidence/ppo_ablation_v5.json","dataType":"generic"},
+    {"id":"teacher-fit","name":"MPC teacher fit","kind":"distillation","path":"docs/control/evidence/teacher_fit.json","dataType":"generic"},
+    {"id":"teacher-40-epochs","name":"Teacher distillation, 40 epochs","kind":"distillation","path":"docs/control/evidence/teacher_40_epochs.json","dataType":"generic"},
+    {"id":"goal-hold-confirmation","name":"Random goal-hold confirmation","kind":"paired-evaluation","path":"docs/control/evidence/random_goal_hold_20261006/evaluation_confirmation.json","dataType":"goal-hold"},
+    {"id":"goal-hold-development","name":"Random goal-hold development evaluation","kind":"paired-evaluation","path":"docs/control/evidence/random_goal_hold_20261006/evaluation_dev.json","dataType":"goal-hold"},
+    {"id":"goal-hold-training","name":"Random goal-hold training history","kind":"training","path":"docs/control/evidence/random_goal_hold_20261006/training.json","dataType":"generic"},
+    {"id":"goal-hold-metadata","name":"Random goal-hold run metadata","kind":"configuration","path":"docs/control/evidence/random_goal_hold_20261006/run_metadata.json","dataType":"goal-hold-metadata"}
+  ],
+  "media": [
+    {"id":"ppo-stage-8192","name":"PPO · 8,192 training steps","stage":"Early learning","description":"Policy checkpoint captured near the start of the best random-goal-and-hold run.","path":"runs/phase5/energy_alignment_mpc_20261006/zero_init_ppo/weight32_seed389/videos/ppo_008192.mp4"},
+    {"id":"ppo-stage-32768","name":"PPO · 32,768 training steps","stage":"Mid training","description":"Intermediate policy checkpoint from the selected training run.","path":"runs/phase5/energy_alignment_mpc_20261006/zero_init_ppo/weight32_seed389/videos/ppo_032768.mp4"},
+    {"id":"ppo-stage-65536","name":"PPO · 65,536 training steps","stage":"Final training step","description":"Final selected policy checkpoint, paired with the independent confirmation evidence.","path":"runs/phase5/energy_alignment_mpc_20261006/zero_init_ppo/weight32_seed389/videos/ppo_065536.mp4"}
+  ]
+}

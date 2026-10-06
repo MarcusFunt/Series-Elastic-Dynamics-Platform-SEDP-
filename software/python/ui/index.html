@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1118">
+  <title>SEDP Project Workspace</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+  <script src="/plotly.js"></script>
+  <script type="module" src="/ui/js/app.js"></script>
+</head>
+<body>
+  <div class="workspace">
+    <aside class="sidebar">
+      <a class="brand" href="#/overview" aria-label="SEDP workspace overview">
+        <span class="brand-mark" aria-hidden="true">S</span>
+        <span><b>SEDP</b><small>Dynamics workspace</small></span>
+      </a>
+      <div class="sidebar-label">PROJECT</div>
+      <nav id="primaryNav" aria-label="Project views">
+        <button class="nav-item active" data-view="overview"><span class="nav-icon">⌂</span>Overview</button>
+        <div class="nav-label">DYNAMICS</div>
+        <button class="nav-item" data-view="rig"><span class="nav-icon">◉</span>Rig simulator</button>
+        <button class="nav-item" data-view="models"><span class="nav-icon">◇</span>Digital twin</button>
+        <button class="nav-item" data-view="controls"><span class="nav-icon">⌁</span>Control lab</button>
+        <button class="nav-item" data-view="sensors"><span class="nav-icon">⌗</span>Sensors & timing</button>
+        <div class="nav-label">RESEARCH</div>
+        <button class="nav-item" data-view="learning"><span class="nav-icon">⌘</span>Learning & experiments</button>
+        <button class="nav-item" data-view="hardware"><span class="nav-icon">▤</span>Hardware & firmware</button>
+        <button class="nav-item" data-view="haptics"><span class="nav-icon">⌖</span>Haptics & system ID</button>
+        <button class="nav-item" data-view="project-map"><span class="nav-icon">☷</span>Project map</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <span class="status-dot"></span>
+        <span>Simulation first</span>
+        <span class="sidebar-version">SEDP</span>
+      </div>
+    </aside>
+    <div class="main-shell">
+      <header class="topbar">
+        <div class="breadcrumbs"><span>SEDP</span><span class="crumb-sep">/</span><b id="currentViewName">Overview</b></div>
+        <div class="top-status"><span class="status-dot"></span><span>Physical rig not validated</span></div>
+      </header>
+      <main id="viewRoot" tabindex="-1" aria-live="polite">
+        <div class="loading">Loading project catalog…</div>
+      </main>
+      <footer class="app-footer"><span>Series-Elastic Dynamics Platform</span><span>Data labels distinguish live simulation, saved evidence, and design targets.</span></footer>
+    </div>
+  </div>
+</body>
+</html>

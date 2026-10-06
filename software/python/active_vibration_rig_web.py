@@ -45,7 +45,9 @@ from typing import Any, Dict, Optional
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from training_web import TrainingJobs
+from project_catalog import get_evidence, list_evidence, list_media, load_catalog, media_path, public_evidence_source, source_path
 from plotly.offline import get_plotlyjs
 import uvicorn
 
@@ -422,6 +424,8 @@ def create_app(runtime: Runtime, training_root: Optional[Path] = None) -> FastAP
 
     app = FastAPI(title="Active vibration rig", lifespan=lifespan)
     app.state.training_jobs = jobs
+    ui_dir = Path(__file__).with_name("ui")
+    app.mount("/ui", StaticFiles(directory=ui_dir), name="project-ui")
     tabs = '<nav class="seg" aria-label="Workspace"><button id="simulationTab" class="active">Simulator</button><button id="trainingTab">Training</button></nav>'
     html = build_html().replace('<div class="grid">', tabs+'<div class="grid" id="simView">', 1)
     html = html.replace('<div class="footer">', Path(__file__).with_name('training_ui.html').read_text()+'<div class="footer">', 1)
@@ -432,7 +436,10 @@ def create_app(runtime: Runtime, training_root: Optional[Path] = None) -> FastAP
         origin = request.headers.get('origin')
         if request.method == 'POST' and origin and origin != str(request.base_url).rstrip('/'):
             return Response('Cross-origin job control is disabled', status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        if request.url.path == '/' or request.url.path.startswith('/ui/') or request.url.path == '/plotly.js':
+            response.headers['Cache-Control'] = 'no-store'
+        return response
 
     def job_error(exc):
         if isinstance(exc, FileNotFoundError): return HTTPException(404, 'Run or artifact not found')
@@ -488,9 +495,78 @@ def create_app(runtime: Runtime, training_root: Optional[Path] = None) -> FastAP
             return {'loaded': filename, 'policy_label': runtime.policy_label}
         except (ValueError, OSError, RuntimeError) as exc: raise job_error(exc)
 
-    @app.get("/", response_class=HTMLResponse)
-    async def root() -> str:
+    @app.get("/live", response_class=HTMLResponse)
+    async def live_workspace() -> str:
         return html
+
+    @app.get("/", response_class=HTMLResponse)
+    async def root() -> FileResponse:
+        return FileResponse(ui_dir / "index.html", media_type="text/html")
+
+    @app.get("/api/project/catalog")
+    async def project_catalog() -> Dict[str, Any]:
+        return load_catalog()
+
+    @app.get("/api/project/evidence")
+    async def project_evidence() -> list[Dict[str, Any]]:
+        return list_evidence()
+
+    @app.get("/api/project/media")
+    async def project_media() -> list[Dict[str, Any]]:
+        return list_media()
+
+    @app.get("/api/project/media/{media_id}")
+    async def project_media_file(media_id: str) -> FileResponse:
+        try:
+            item, path = media_path(media_id)
+            if not path.is_file():
+                raise FileNotFoundError(item["path"])
+            media_type = "video/mp4" if path.suffix.lower() == ".mp4" else "video/webm"
+            return FileResponse(path, media_type=media_type)
+        except KeyError:
+            raise HTTPException(404, "Recorded video not found")
+        except OSError:
+            raise HTTPException(404, "Recorded video not available in this checkout")
+
+    @app.get("/api/project/evidence/{evidence_id}/source")
+    async def project_evidence_source(evidence_id: str) -> Response:
+        try:
+            _, text = public_evidence_source(evidence_id)
+            return Response(text, media_type="text/plain; charset=utf-8")
+        except KeyError:
+            raise HTTPException(404, "Evidence not found")
+        except OSError:
+            raise HTTPException(404, "Evidence source not found")
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(422, f"Evidence source could not be read: {exc}")
+
+    @app.get("/api/project/evidence/{evidence_id}")
+    async def project_evidence_detail(evidence_id: str) -> Dict[str, Any]:
+        try:
+            item, data = get_evidence(evidence_id)
+            return {"id": item["id"], "name": item["name"], "kind": item["kind"], "dataType": item["dataType"], "data": data}
+        except KeyError:
+            raise HTTPException(404, "Evidence not found")
+        except FileNotFoundError:
+            raise HTTPException(404, "Evidence source not found")
+        except (OSError, ValueError, TypeError) as exc:
+            raise HTTPException(422, f"Evidence could not be read: {exc}")
+
+    @app.get("/api/project/source/{source_id}")
+    async def project_source(source_id: str) -> Response:
+        try:
+            _, path = source_path(source_id)
+            if not path.is_file():
+                raise FileNotFoundError(source_id)
+            return Response(path.read_text(encoding="utf-8"), media_type="text/plain; charset=utf-8")
+        except KeyError:
+            raise HTTPException(404, "Project source not found")
+        except OSError:
+            raise HTTPException(404, "Project source not found")
+
+    @app.get("/plotly.js")
+    async def plotly_bundle() -> Response:
+        return Response(get_plotlyjs(), media_type="application/javascript")
 
     @app.get("/api/state")
     async def state() -> Dict[str, Any]:

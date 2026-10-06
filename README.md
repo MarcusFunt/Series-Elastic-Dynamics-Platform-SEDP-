@@ -125,11 +125,13 @@ cd software/python
 python active_vibration_rig_2d.py --headless 5 --controller lqr --trajectory aggressive
 ```
 
-Run the browser:
+Run the full project browser workspace (simulation, evidence, model, firmware, and hardware-design views):
 
 ```bash
 python active_vibration_rig_web.py --controller lqr --trajectory aggressive
 ```
+
+Open `http://127.0.0.1:8765`. The live rig simulator is available from the **Rig simulator** view. See [the browser workspace guide](docs/BROWSER_UI.md) for data labels and the full project map.
 
 With a v3 checkpoint:
 

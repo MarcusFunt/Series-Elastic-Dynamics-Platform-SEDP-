@@ -83,6 +83,7 @@ document.addEventListener('DOMContentLoaded',()=>{
  el('cancelTraining').onclick=async()=>{try{const active=runs.find(r=>['running','cancelling'].includes(r.status));if(active){await api('/runs/'+active.id+'/cancel',{});await poll();}}catch(e){el('trainingError').textContent=e.message;}};
  async function load(file){el('policyLoadStatus').textContent='Loading checkpoint…';try{await api('/runs/'+selected+'/load',{file});el('policyLoadStatus').textContent='Loaded '+file+'. Simulator reset using checkpoint timing.';showTab('sim');}catch(e){el('policyLoadStatus').textContent=e.message;}}
  el('loadCheckpoint').onclick=()=>load('policy_candidate.pt');el('loadAccepted').onclick=()=>load('policy_accepted.pt');
+ const requestedView=new URLSearchParams(location.search).get('view');if(requestedView==='training')showTab('training');
  poll();setInterval(poll,2500);
 });
 </script>
