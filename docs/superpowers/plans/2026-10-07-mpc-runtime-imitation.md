@@ -30,26 +30,32 @@
 
 **Files:** Modify `software/python/evaluate_goal_hold_v4.py`; create baseline evidence under `runs/phase6/mpc_runtime_imitation_20261007/`.
 
-- [ ] Run the existing goal-hold baseline on paired evaluation seeds; record per-action MPC p50/p95/p99, 10 ms deadline misses, fallback rate, tracking, energy, exclusion, and hold outcomes.
-- [ ] Preserve the baseline JSON and command/config metadata.
+- [x] Run the existing goal-hold baseline on paired evaluation seeds; record per-action MPC p50/p95/p99, 10 ms deadline misses, fallback rate, tracking, energy, exclusion, and hold outcomes.
+- [x] Preserve the baseline JSON and command/config metadata.
 
 ### Task 2: Benchmark a fidelity-preserving MPC optimization
 
 **Files:** Modify `software/python/constrained_mpc.py` only if measurements justify it; extend `tests/test_constrained_mpc_phase4.py` for configuration and safety behavior; record candidate evidence beside baseline.
 
-- [ ] Compare default torque linearization stride 1 with stride 2 on the exact same seeds.
-- [ ] Keep the faster stride only if every paired run retains target completion, exclusion, safety, tracking, and angle gates against stride 1.
-- [ ] Re-run the selected setting to confirm the result and report latency percentiles and fallback changes.
+- [x] Compare default torque linearization stride 1 with stride 2 on the exact same seeds.
+- [x] Keep the faster stride only if every paired run retains target completion, exclusion, safety, tracking, and angle gates against stride 1.
+- [x] Re-run the selected setting to confirm the result and report latency percentiles and fallback changes.
 
 ### Task 3: Train an MPC imitation policy with matching teacher settings
 
 **Files:** Modify `software/python/train_residual_v4.py` and `software/python/evaluate_goal_hold_v4.py` as needed; save artifacts under `runs/phase6/mpc_runtime_imitation_20261007/`.
 
-- [ ] Collect MPC actions under the selected optimized configuration with the random-goal-hold task, the 15 mm exclusion margin, and at least 2.5 s target holds.
-- [ ] Distill a deterministic actor using episode-disjoint validation; record teacher action error and the number of excluded fallback labels.
-- [ ] Evaluate MPC, LQR, and imitation on held-out seeds with identical episode seeds/configuration; record controller latency distributions and closed-loop metrics.
+- [x] Collect MPC actions under the selected configuration with the random-goal-hold task, the 15 mm exclusion margin, and at least 2.5 s target holds.
+- [x] Distill a deterministic actor using episode-disjoint validation; record teacher action error and the number of excluded fallback labels.
+- [x] Evaluate MPC, LQR, and imitation on held-out seeds with identical episode seeds/configuration; record controller latency distributions and closed-loop metrics.
 
 ### Task 4: Report the recommendation
 
-- [ ] Save a concise Markdown report linking source revision, commands, settings, artifacts, per-seed results, and whether the imitation policy meets the performance/speed tradeoff.
-- [ ] Re-run required verification and inspect the final diff before committing.
+- [x] Save a concise Markdown report linking source revision, commands, settings, artifacts, per-seed results, and whether the imitation policy meets the performance/speed tradeoff.
+- [x] Re-run required verification and inspect the final diff before committing.
+
+## Outcome
+
+- Stride 2 was slower by 17.4% on mean paired p95 and increased deadline misses on four of five seeds; stride 1 remained selected.
+- The 9,600-label student was 14.1× faster at p95, but mean resonator energy was 4.5% higher than MPC and the 2% paired energy bound failed on seven of ten seeds. Peak angle also failed on one seed. The student is not yet a performance-preserving MPC substitute.
+- Evidence: `docs/control/evidence/mpc_runtime_imitation_20261007.md` and `.json`.
