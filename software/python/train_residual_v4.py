@@ -18,6 +18,7 @@ from rig_rl_env_v4 import RigRLEnvV4,RLEnvConfigV4,VectorRigEnvV4
 from constrained_mpc import ConstrainedMPC,MPCConfig
 from residual_control_v4 import FRAME_SIGNS
 from evaluate_v4 import reference_preview,evaluate,promotion,load_policy
+from evaluate_goal_hold_v4 import goal_hold_mpc_config
 
 SCHEMA='sedp-v4-estimated-context-history'
 
@@ -68,19 +69,19 @@ def source_revision():
     return result.stdout.strip()
 
 
-def collect_teacher(cfg,samples,episodes,seed,horizon,base_params=None):
+def collect_teacher(cfg,samples,episodes,seed,horizon,base_params=None,mpc_config=None):
     if samples<episodes or episodes<2:raise ValueError('Need at least two episodes and samples >= episodes')
+    mpc_config=mpc_config or goal_hold_mpc_config(cfg,horizon)
+    if not isinstance(mpc_config,MPCConfig):mpc_config=MPCConfig(**mpc_config)
     X=[];Y=[];groups=[];valid=[];diagnostics=[]
     per_episode=int(np.ceil(samples/episodes))
     for episode in range(episodes):
         env=RigRLEnvV4(base_params=base_params,cfg=cfg,seed=seed+1009*episode);obs,_=env.reset()
         # Use the same episode plant model as the LQR controller that anchors
         # this rollout, including any domain-randomized parameter draw.
-        teacher=ConstrainedMPC(env.p,env.cp,MPCConfig(horizon=horizon,
-                    physics_dt=cfg.physics_dt,control_dt=cfg.control_dt,
-                    residual_accel_limit=cfg.residual_accel_limit,
-                    actuator_mode=cfg.actuator_mode,step_dir=cfg.step_dir,
-                    command_delay=cfg.command_delay,command_jitter=cfg.command_jitter))
+        if mpc_config.horizon!=horizon:
+            raise ValueError('MPC config horizon must match teacher collection horizon')
+        teacher=ConstrainedMPC(env.p,env.cp,mpc_config)
         for _ in range(min(per_episode,cfg.max_steps)):
             action=teacher.action(
                 env.loop.state,reference_preview(env,horizon),
@@ -174,6 +175,8 @@ def main():
     ap.add_argument('--dataset',type=Path,help='Re-fit an existing teacher_runs.npz without recollecting');ap.add_argument('--outdir',type=Path,default=Path('runs/v4'));ap.add_argument('--seed',type=int,default=173)
     ap.add_argument('--samples',type=int,default=2400);ap.add_argument('--episodes',type=int,default=8)
     ap.add_argument('--epochs',type=int,default=30);ap.add_argument('--horizon',type=int,default=8)
+    ap.add_argument('--linearization-stride',type=int,
+                    help='Torque MPC model-Jacobian refresh interval for teacher collection')
     ap.add_argument('--history',type=int,default=8);ap.add_argument('--linear-encoder',action='store_true')
     ap.add_argument('--oracle-state',action='store_true');ap.add_argument('--no-preview',action='store_true')
     ap.add_argument('--init',type=Path)
@@ -202,7 +205,8 @@ def main():
     if not isinstance(plant_overrides,dict):raise ValueError('--plant-overrides must contain a JSON object')
     base_params=PlantParams(**plant_overrides) if plant_overrides else None
     if (args.epochs<1 or args.steps<1 or args.envs<1 or args.rollout<2 or
-            args.ppo_epochs<1 or args.entropy_coef<0 or args.symmetry_coef<0):
+            args.ppo_epochs<1 or args.entropy_coef<0 or args.symmetry_coef<0 or
+            (args.linearization_stride is not None and args.linearization_stride < 1)):
         raise ValueError('Training counts and PPO regularization settings must be nonnegative/positive')
     out=args.outdir;out.mkdir(parents=True,exist_ok=True);started=time.time()
     step_dir=StepDirParams(
@@ -220,11 +224,16 @@ def main():
                       goal_move_seconds=args.goal_move_seconds,
                       goal_hold_min_seconds=args.goal_hold_min_seconds,
                       goal_hold_extra_seconds=args.goal_hold_extra_seconds)
+    mpc_config=None
     if args.mode=='teacher':
         if args.dataset:
             data=np.load(args.dataset,allow_pickle=False)
             source=json.loads((args.dataset.parent/'teacher_config.json').read_text())
             cfg=RLEnvConfigV4(**source['env_config'])
+            mpc_config=MPCConfig(**source.get('mpc_config',asdict(
+                goal_hold_mpc_config(cfg,args.horizon))))
+            if args.linearization_stride is not None:
+                mpc_config=replace(mpc_config,linearization_stride=args.linearization_stride)
             if args.actuator_mode is not None and cfg.actuator_mode != args.actuator_mode:
                 raise ValueError('Requested actuator mode does not match the saved teacher dataset')
             if (args.step_dir_max_velocity is not None and
@@ -236,15 +245,16 @@ def main():
             X,Y,groups,valid=[data[k] for k in ('observations','actions','episode','successful')]
             diagnostics=json.loads((args.dataset.parent/'teacher_solver.json').read_text())
         else:
+            mpc_config=goal_hold_mpc_config(
+                cfg,args.horizon,args.linearization_stride or 1)
             X,Y,groups,valid,diagnostics=collect_teacher(
-                cfg,args.samples,args.episodes,args.seed,args.horizon,base_params=base_params)
-        teacher_config=source if args.dataset else {'env_config':asdict(cfg),'seed':args.seed,
-                    'plant_parameters':asdict(base_params) if base_params else None,
-                    'plant_overrides':plant_overrides,
-                    'mpc_config':asdict(MPCConfig(horizon=args.horizon,physics_dt=cfg.physics_dt,
-                        control_dt=cfg.control_dt,residual_accel_limit=cfg.residual_accel_limit,
-                        actuator_mode=cfg.actuator_mode,step_dir=cfg.step_dir,
-                        command_delay=cfg.command_delay,command_jitter=cfg.command_jitter))}
+                cfg,args.samples,args.episodes,args.seed,args.horizon,
+                base_params=base_params,mpc_config=mpc_config)
+        teacher_config=({**source,'mpc_config':asdict(mpc_config)} if args.dataset else
+                    {'env_config':asdict(cfg),'seed':args.seed,
+                     'plant_parameters':asdict(base_params) if base_params else None,
+                     'plant_overrides':plant_overrides,
+                     'mpc_config':asdict(mpc_config)})
         (out/'teacher_config.json').write_text(json.dumps(teacher_config,indent=2))
         np.savez_compressed(out/'teacher_runs.npz',observations=X,actions=Y,episode=groups,successful=valid)
         (out/'teacher_solver.json').write_text(json.dumps(diagnostics,indent=2))
@@ -278,7 +288,8 @@ def main():
     run_metadata=metadata(steps,args.mode,cfg=cfg,wall_seconds=elapsed,
                           source_revision=revision,seed=args.seed,
                           plant_parameters=asdict(base_params) if base_params else None,
-                          plant_overrides=plant_overrides)
+                          plant_overrides=plant_overrides,
+                          mpc_config=asdict(mpc_config) if mpc_config is not None else None)
     (out/'run_metadata.json').write_text(json.dumps({
         **run_metadata,
         'arguments':{key:(str(value) if isinstance(value,Path) else value)

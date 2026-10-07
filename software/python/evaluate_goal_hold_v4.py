@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import time
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -16,21 +17,49 @@ from evaluate_v4 import load_policy, reference_preview
 from rig_rl_env_v4 import RigRLEnvV4
 
 
-def run_case(controller, seed, cfg, model=None, horizon=8, tolerance_mm=5.,base_params=None):
+def goal_hold_mpc_config(cfg, horizon=8, linearization_stride=1):
+    """Build the MPC profile used by random-goal-hold evaluation and teaching."""
+    return MPCConfig(
+        horizon=horizon, physics_dt=cfg.physics_dt, control_dt=cfg.control_dt,
+        residual_accel_limit=cfg.residual_accel_limit,
+        actuator_mode=cfg.actuator_mode, step_dir=cfg.step_dir,
+        command_delay=cfg.command_delay, command_jitter=cfg.command_jitter,
+        angle_weight=3.2, angular_rate_weight=.8, action_weight=.04,
+        linearization_stride=linearization_stride)
+
+
+def _latency_metrics(samples, control_dt):
+    values = np.asarray(samples, dtype=float)
+    if not len(values):
+        return {'mean_ms': 0., 'p50_ms': 0., 'p95_ms': 0., 'p99_ms': 0.,
+                'max_ms': 0., 'deadline_miss_fraction': 0.}
+    return {
+        'mean_ms': float(np.mean(values) * 1000.),
+        'p50_ms': float(np.quantile(values, .50) * 1000.),
+        'p95_ms': float(np.quantile(values, .95) * 1000.),
+        'p99_ms': float(np.quantile(values, .99) * 1000.),
+        'max_ms': float(np.max(values) * 1000.),
+        'deadline_miss_fraction': float(np.mean(values > control_dt)),
+    }
+
+
+def run_case(controller, seed, cfg, model=None, horizon=8, tolerance_mm=5.,
+             base_params=None, mpc_config=None):
     env=RigRLEnvV4(base_params=base_params,cfg=cfg,seed=seed)
     obs,_=env.reset()
     if cfg.reference_mode!='random_goal_hold':
         raise ValueError('Checkpoint/environment must use the random_goal_hold reference')
     teacher=None
     if controller=='mpc':
-        teacher=ConstrainedMPC(env.p,env.cp,MPCConfig(
-            horizon=horizon,physics_dt=cfg.physics_dt,control_dt=cfg.control_dt,
-            residual_accel_limit=cfg.residual_accel_limit,
-            actuator_mode=cfg.actuator_mode,step_dir=cfg.step_dir,
-            command_delay=cfg.command_delay,command_jitter=cfg.command_jitter,
-            angle_weight=3.2,angular_rate_weight=.8,action_weight=.04))
+        if mpc_config is None:
+            mpc_config=goal_hold_mpc_config(cfg,horizon)
+        elif not isinstance(mpc_config,MPCConfig):
+            mpc_config=MPCConfig(**mpc_config)
+        if mpc_config.horizon!=horizon:
+            raise ValueError('MPC config horizon must match the requested evaluation horizon')
+        teacher=ConstrainedMPC(env.p,env.cp,mpc_config)
 
-    rows=[]; terminated=False; fallback=0; solves=[]
+    rows=[]; terminated=False; fallback=0; solves=[]; policy_times=[]
     hold_runs={}; current_run={}; hold_targets={}
     for _ in range(cfg.max_steps):
         if controller=='lqr':
@@ -43,8 +72,10 @@ def run_case(controller, seed, cfg, model=None, horizon=8, tolerance_mm=5.,base_
             fallback+=int(not teacher.diagnostics['success'])
             solves.append(teacher.diagnostics['solve_seconds'])
         elif controller=='policy':
+            action_started=time.perf_counter()
             with torch.no_grad():
                 action=float(model.deterministic(torch.tensor(obs,dtype=torch.float32).unsqueeze(0))[0,0])
+            policy_times.append(time.perf_counter()-action_started)
         else:
             raise ValueError(controller)
         obs,_,te,tr,info=env.step([action])
@@ -76,6 +107,8 @@ def run_case(controller, seed, cfg, model=None, horizon=8, tolerance_mm=5.,base_
     completed=sum(v>=2.0-1e-9 for v in hold_runs.values())
     max_contiguous=max(hold_runs.values(),default=0.)
     energy=float(np.sum(a[:,4])*cfg.control_dt*1000.)
+    mpc_latency=_latency_metrics(solves,cfg.control_dt)
+    policy_latency=_latency_metrics(policy_times,cfg.control_dt)
     return {
         'controller':controller,'seed':int(seed),'steps':len(a),'terminated':terminated,
         'integrated_resonator_energy_mJs':energy,
@@ -93,7 +126,19 @@ def run_case(controller, seed, cfg, model=None, horizon=8, tolerance_mm=5.,base_
         'longest_contiguous_in_tolerance_hold_s':float(max_contiguous),
         'hold_tolerance_mm':float(tolerance_mm),
         'mpc_fallback_fraction':fallback/max(len(a),1) if controller=='mpc' else 0.,
-        'mpc_solve_p95_ms':float(np.quantile(solves,.95)*1000.) if solves else 0.,
+        'mpc_linearization_stride':(teacher.cfg.linearization_stride if teacher else None),
+        'mpc_solve_mean_ms':mpc_latency['mean_ms'],
+        'mpc_solve_p50_ms':mpc_latency['p50_ms'],
+        'mpc_solve_p95_ms':mpc_latency['p95_ms'],
+        'mpc_solve_p99_ms':mpc_latency['p99_ms'],
+        'mpc_solve_max_ms':mpc_latency['max_ms'],
+        'mpc_deadline_miss_fraction':mpc_latency['deadline_miss_fraction'],
+        'policy_action_mean_ms':policy_latency['mean_ms'],
+        'policy_action_p50_ms':policy_latency['p50_ms'],
+        'policy_action_p95_ms':policy_latency['p95_ms'],
+        'policy_action_p99_ms':policy_latency['p99_ms'],
+        'policy_action_max_ms':policy_latency['max_ms'],
+        'policy_deadline_miss_fraction':policy_latency['deadline_miss_fraction'],
     }
 
 
@@ -118,6 +163,16 @@ def summarize(rows):
         if ctrl=='mpc':
             result[ctrl]['mean_fallback_fraction']=float(np.mean([r['mpc_fallback_fraction'] for r in group]))
             result[ctrl]['mean_solve_p95_ms']=float(np.mean([r['mpc_solve_p95_ms'] for r in group]))
+            result[ctrl]['mean_solve_p99_ms']=float(np.mean([r['mpc_solve_p99_ms'] for r in group]))
+            result[ctrl]['mean_deadline_miss_fraction']=float(np.mean([
+                r['mpc_deadline_miss_fraction'] for r in group]))
+        if ctrl=='policy':
+            result[ctrl]['mean_action_p95_ms']=float(np.mean([
+                r['policy_action_p95_ms'] for r in group]))
+            result[ctrl]['mean_action_p99_ms']=float(np.mean([
+                r['policy_action_p99_ms'] for r in group]))
+            result[ctrl]['mean_deadline_miss_fraction']=float(np.mean([
+                r['policy_deadline_miss_fraction'] for r in group]))
 
     policy=[by[('policy',s)] for s in seeds]
     lqr=[by[('lqr',s)] for s in seeds]
@@ -169,6 +224,8 @@ def main():
     parser.add_argument('--json',type=Path,required=True)
     parser.add_argument('--seeds',nargs='*',type=int,default=[8011,8012,8013,8014,8015])
     parser.add_argument('--horizon',type=int,default=8)
+    parser.add_argument('--linearization-stride',type=int,
+                        help='Torque MPC model-Jacobian refresh interval; defaults to the checkpoint teacher setting or 1')
     parser.add_argument('--tolerance-mm',type=float,default=5.)
     parser.add_argument('--plant-overrides',type=Path,
                         help='JSON mapping of PlantParams fields for a geometry sensitivity run')
@@ -183,12 +240,25 @@ def main():
                      ck.get('extra',{}).get('plant_overrides',{}))
     if not isinstance(plant_overrides,dict):raise ValueError('--plant-overrides must contain a JSON object')
     base_params=PlantParams(**plant_overrides) if plant_overrides else None
+    saved_mpc_config=ck.get('extra',{}).get('mpc_config')
+    mpc_config=(MPCConfig(**saved_mpc_config) if saved_mpc_config else
+                goal_hold_mpc_config(cfg,args.horizon))
+    mpc_config=replace(mpc_config,horizon=args.horizon,
+                       physics_dt=cfg.physics_dt,control_dt=cfg.control_dt,
+                       residual_accel_limit=cfg.residual_accel_limit,
+                       actuator_mode=cfg.actuator_mode,step_dir=cfg.step_dir,
+                       command_delay=cfg.command_delay,command_jitter=cfg.command_jitter)
+    if args.linearization_stride is not None:
+        if args.linearization_stride < 1:
+            raise ValueError('--linearization-stride must be positive')
+        mpc_config=replace(mpc_config,linearization_stride=args.linearization_stride)
     rows=[]
     torch.set_num_threads(1)
     for seed in args.seeds:
         for controller in ('lqr','mpc','policy'):
             result=run_case(controller,seed,cfg,model,args.horizon,args.tolerance_mm,
-                             base_params=base_params)
+                             base_params=base_params,
+                             mpc_config=mpc_config if controller=='mpc' else None)
             rows.append(result)
             print('EVENT '+json.dumps({'controller':controller,'seed':seed,
                                        'completed_holds':result['completed_two_second_holds'],
@@ -196,6 +266,7 @@ def main():
                                        'exclusion_violations':result['exclusion_zone_violations']}),flush=True)
     decision,summary=summarize(rows)
     output={'benchmark_version':'SEDP-V4-RANDOM-GOAL-HOLD','config':asdict(cfg),
+            'mpc_config':asdict(mpc_config),
             'plant_overrides':plant_overrides,
             'checkpoint':str(args.model),'source_revision':ck.get('extra',{}).get('source_revision'),
             'hold_tolerance_mm':args.tolerance_mm,'rows':rows,'summary':summary,

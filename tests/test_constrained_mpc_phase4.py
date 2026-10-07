@@ -216,6 +216,26 @@ class ConstrainedMPCPhase4Tests(unittest.TestCase):
         self.assertTrue(result['per_case_regressions_checked'])
         self.assertTrue(any('position_rmse_mm' in reason for reason in result['reasons']))
 
+    def test_goal_hold_config_is_shared_and_evaluation_records_latency_and_stride(self):
+        from evaluate_goal_hold_v4 import goal_hold_mpc_config, run_case
+        from rig_rl_env_v4 import RLEnvConfigV4
+
+        cfg = RLEnvConfigV4(
+            episode_seconds=.02, domain_randomization=False, kick_probability=0.,
+            initial_theta_std=0., initial_theta_dot_std=0., sensor_noise=False,
+            reference_mode='random_goal_hold')
+        mpc_cfg = goal_hold_mpc_config(cfg, horizon=4, linearization_stride=2)
+        self.assertEqual(mpc_cfg.linearization_stride, 2)
+        self.assertEqual(mpc_cfg.angle_weight, 3.2)
+        self.assertEqual(mpc_cfg.angular_rate_weight, .8)
+        self.assertEqual(mpc_cfg.action_weight, .04)
+
+        row = run_case('mpc', seed=7, cfg=cfg, horizon=4, mpc_config=mpc_cfg)
+        self.assertEqual(row['mpc_linearization_stride'], 2)
+        self.assertIn('mpc_solve_p50_ms', row)
+        self.assertIn('mpc_solve_p99_ms', row)
+        self.assertIn('mpc_deadline_miss_fraction', row)
+
 
 if __name__ == '__main__':
     unittest.main()
