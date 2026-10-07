@@ -28,6 +28,25 @@ def goal_hold_mpc_config(cfg, horizon=8, linearization_stride=1):
         linearization_stride=linearization_stride)
 
 
+def resolve_mpc_config(cfg, checkpoint, horizon_override=None, stride_override=None):
+    """Use checkpoint teacher settings unless the caller explicitly overrides them."""
+    saved = checkpoint.get('extra', {}).get('mpc_config') or {}
+    horizon = horizon_override if horizon_override is not None else saved.get('horizon', 8)
+    if horizon < 2:
+        raise ValueError('MPC horizon must be at least two')
+    config = MPCConfig(**saved) if saved else goal_hold_mpc_config(cfg, horizon)
+    config = replace(config, horizon=horizon,
+                     physics_dt=cfg.physics_dt, control_dt=cfg.control_dt,
+                     residual_accel_limit=cfg.residual_accel_limit,
+                     actuator_mode=cfg.actuator_mode, step_dir=cfg.step_dir,
+                     command_delay=cfg.command_delay, command_jitter=cfg.command_jitter)
+    if stride_override is not None:
+        if stride_override < 1:
+            raise ValueError('--linearization-stride must be positive')
+        config = replace(config, linearization_stride=stride_override)
+    return config
+
+
 def _latency_metrics(samples, control_dt):
     values = np.asarray(samples, dtype=float)
     if not len(values):
@@ -223,7 +242,8 @@ def main():
     parser.add_argument('--model',type=Path,required=True)
     parser.add_argument('--json',type=Path,required=True)
     parser.add_argument('--seeds',nargs='*',type=int,default=[8011,8012,8013,8014,8015])
-    parser.add_argument('--horizon',type=int,default=8)
+    parser.add_argument('--horizon',type=int,
+                        help='Explicit horizon override; defaults to the checkpoint teacher horizon or 8')
     parser.add_argument('--linearization-stride',type=int,
                         help='Torque MPC model-Jacobian refresh interval; defaults to the checkpoint teacher setting or 1')
     parser.add_argument('--tolerance-mm',type=float,default=5.)
@@ -240,23 +260,13 @@ def main():
                      ck.get('extra',{}).get('plant_overrides',{}))
     if not isinstance(plant_overrides,dict):raise ValueError('--plant-overrides must contain a JSON object')
     base_params=PlantParams(**plant_overrides) if plant_overrides else None
-    saved_mpc_config=ck.get('extra',{}).get('mpc_config')
-    mpc_config=(MPCConfig(**saved_mpc_config) if saved_mpc_config else
-                goal_hold_mpc_config(cfg,args.horizon))
-    mpc_config=replace(mpc_config,horizon=args.horizon,
-                       physics_dt=cfg.physics_dt,control_dt=cfg.control_dt,
-                       residual_accel_limit=cfg.residual_accel_limit,
-                       actuator_mode=cfg.actuator_mode,step_dir=cfg.step_dir,
-                       command_delay=cfg.command_delay,command_jitter=cfg.command_jitter)
-    if args.linearization_stride is not None:
-        if args.linearization_stride < 1:
-            raise ValueError('--linearization-stride must be positive')
-        mpc_config=replace(mpc_config,linearization_stride=args.linearization_stride)
+    mpc_config=resolve_mpc_config(cfg,ck,args.horizon,args.linearization_stride)
+    horizon=mpc_config.horizon
     rows=[]
     torch.set_num_threads(1)
     for seed in args.seeds:
         for controller in ('lqr','mpc','policy'):
-            result=run_case(controller,seed,cfg,model,args.horizon,args.tolerance_mm,
+            result=run_case(controller,seed,cfg,model,horizon,args.tolerance_mm,
                              base_params=base_params,
                              mpc_config=mpc_config if controller=='mpc' else None)
             rows.append(result)
