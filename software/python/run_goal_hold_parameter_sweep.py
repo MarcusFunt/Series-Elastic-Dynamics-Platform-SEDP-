@@ -173,9 +173,9 @@ def eval_summary(model_path, output_path, log_path, seeds, geometry_path, label,
 def candidate_rank(item):
     decision = item.get('promotion', {})
     summary = item.get('summary', {})
-    ratio = summary.get('policy_mpc_integrated_resonator_energy_ratio', float('inf'))
-    return (not decision.get('accepted_vs_mpc', False),
-            not decision.get('accepted_vs_lqr', False), ratio,
+    ratio = decision.get('policy_mpc_integrated_resonator_energy_ratio', float('inf'))
+    return (not decision.get('accepted_vs_mpc', False), ratio,
+            not decision.get('accepted_vs_lqr', False),
             summary.get('policy', {}).get('mean_position_rmse_mm', float('inf')))
 
 
