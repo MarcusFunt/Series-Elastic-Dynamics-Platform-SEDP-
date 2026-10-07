@@ -111,12 +111,73 @@ def collect_teacher(cfg,samples,episodes,seed,horizon,base_params=None,mpc_confi
     return np.asarray(X,np.float32),np.asarray(Y,np.float32),np.asarray(groups),np.asarray(valid),diagnostics
 
 
-def distill(X,Y,groups,valid,cfg,epochs,seed):
+def collect_dagger(cfg,student_model,samples,episodes,seed,horizon,base_params=None,mpc_config=None):
+    """Collect MPC labels on observations reached by deterministic student rollouts."""
+    if samples<episodes or episodes<1:
+        raise ValueError('Need at least one episode and samples >= episodes')
+    mpc_config=mpc_config or goal_hold_mpc_config(cfg,horizon)
+    if not isinstance(mpc_config,MPCConfig):mpc_config=MPCConfig(**mpc_config)
+    if mpc_config.horizon!=horizon:
+        raise ValueError('MPC config horizon must match DAgger collection horizon')
+    X=[];Y=[];groups=[];valid=[];student_actions=[];diagnostics=[]
+    per_episode=int(np.ceil(samples/episodes))
+    student_model.eval()
+    for episode in range(episodes):
+        env=RigRLEnvV4(base_params=base_params,cfg=cfg,seed=seed+1009*episode);obs,_=env.reset()
+        teacher=ConstrainedMPC(env.p,env.cp,mpc_config)
+        for _ in range(min(per_episode,cfg.max_steps)):
+            # The expert labels this state before the student's action changes it.
+            teacher_action=teacher.action(
+                env.loop.state,reference_preview(env,horizon),
+                command_queue=env.command_queue,step_dir_actuator=env.step_dir_actuator,
+                time_s=env.t,kick_torque=env.kick_torque,kick_at=env.kick_at,
+                kick_duration=env.kick_duration)
+            teacher_diagnostics=dict(teacher.diagnostics)
+            with torch.no_grad():
+                student_action=float(student_model.deterministic(
+                    torch.as_tensor(obs,dtype=torch.float32).unsqueeze(0))[0,0])
+            X.append(obs.copy());Y.append([teacher_action]);groups.append(episode)
+            valid.append(bool(teacher_diagnostics.get('success',False)))
+            student_actions.append([student_action])
+            diagnostics.append({'episode':episode,'seed':seed+1009*episode,
+                                'student_action':student_action,
+                                'teacher_action':float(teacher_action),**teacher_diagnostics})
+            obs,_,te,tr,_=env.step([student_action])
+            if len(X)%50==0:
+                print('EVENT '+json.dumps({'phase':'dagger','episode':episode+1,
+                      'samples':len(X),'successful':sum(valid)}),flush=True)
+            if te or tr or len(X)>=samples:break
+        print('EVENT '+json.dumps({'phase':'dagger','episode':episode+1,
+              'samples':len(X),'successful':sum(valid)}),flush=True)
+        if len(X)>=samples:break
+    return (np.asarray(X,np.float32),np.asarray(Y,np.float32),np.asarray(groups),
+            np.asarray(valid),np.asarray(student_actions,np.float32),diagnostics)
+
+
+def _split_episode_groups(groups,valid):
+    unique=np.unique(groups)
+    if len(unique)<2:
+        raise RuntimeError('Need at least two episodes for episode-disjoint distillation')
+    heldout=unique[-max(1,len(unique)//4):]
+    train=valid & ~np.isin(groups,heldout)
+    validation=valid & np.isin(groups,heldout)
+    return train,validation,heldout
+
+
+def _initialize_distillation_model(obs_dim,initial_model=None):
+    model=ActorCriticV4(obs_dim,1,128)
+    if initial_model is not None:
+        if initial_model.obs_dim!=obs_dim:
+            raise ValueError('Initial policy observation dimension does not match the dataset')
+        model.load_state_dict(initial_model.state_dict())
+    return model
+
+
+def distill(X,Y,groups,valid,cfg,epochs,seed,initial_model=None):
     torch.manual_seed(seed)
-    unique=np.unique(groups);heldout=unique[-max(1,len(unique)//4):]
-    train=valid & ~np.isin(groups,heldout);validation=valid & np.isin(groups,heldout)
+    train,validation,heldout=_split_episode_groups(groups,valid)
     if train.sum()<8 or validation.sum()<4:raise RuntimeError('Too few successful MPC labels in training/held-out episodes')
-    model=ActorCriticV4(X.shape[1],1,128);opt=torch.optim.Adam(model.parameters(),lr=3e-4)
+    model=_initialize_distillation_model(X.shape[1],initial_model);opt=torch.optim.Adam(model.parameters(),lr=3e-4)
     x=torch.from_numpy(X);target=torch.from_numpy(Y);indices=torch.from_numpy(np.flatnonzero(train))
     signs=np.tile(FRAME_SIGNS,cfg.history_length)
     losses=[];best_validation=float("inf");best_state=None
@@ -183,7 +244,7 @@ def train_ppo(model,cfg,args,outdir,base_params=None):
 
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('mode',choices=['teacher','ppo'])
+    ap=argparse.ArgumentParser();ap.add_argument('mode',choices=['teacher','dagger','ppo'])
     ap.add_argument('--dataset',type=Path,help='Re-fit an existing teacher_runs.npz without recollecting');ap.add_argument('--outdir',type=Path,default=Path('runs/v4'));ap.add_argument('--seed',type=int,default=173)
     ap.add_argument('--samples',type=int,default=2400);ap.add_argument('--episodes',type=int,default=8)
     ap.add_argument('--epochs',type=int,default=30);ap.add_argument('--horizon',type=int)
@@ -297,6 +358,79 @@ def main():
         (out/'teacher_solver.json').write_text(json.dumps(diagnostics,indent=2))
         model,fit=distill(X,Y,groups,valid,cfg,args.epochs,args.seed)
         (out/'teacher_fit.json').write_text(json.dumps(fit,indent=2))
+        pc=PPOConfigV2(hidden_size=128,seed=args.seed);steps=len(X)
+    elif args.mode=='dagger':
+        if not args.dataset or not args.resolved_teacher_config or not args.init:
+            raise ValueError('DAgger mode requires --dataset, --resolved-teacher-config, and --init')
+        source=json.loads(args.resolved_teacher_config.read_text(encoding='utf-8'))
+        if source.get('schema_version')!=1:
+            raise ValueError('Unsupported resolved teacher config schema')
+        cfg=RLEnvConfigV4(**source['env_config'])
+        if cfg.reference_mode!='random_goal_hold':
+            raise ValueError('DAgger requires the saved random_goal_hold task')
+        mpc_config=MPCConfig(**source['mpc_config'])
+        if args.linearization_stride is not None and args.linearization_stride!=mpc_config.linearization_stride:
+            raise ValueError('Requested MPC stride differs from the resolved teacher config')
+        if args.horizon is not None and args.horizon!=mpc_config.horizon:
+            raise ValueError('Requested horizon differs from the resolved teacher config')
+        if not isinstance(source.get('plant_parameters'),dict):
+            raise ValueError('Resolved teacher config must contain complete plant parameters')
+        base_params=PlantParams(**source['plant_parameters'])
+        plant_overrides=source.get('plant_overrides',{})
+        if args.plant_overrides is not None and plant_overrides != json.loads(
+                args.plant_overrides.read_text(encoding='utf-8')):
+            raise ValueError('Plant overrides differ from the resolved teacher config')
+        saved_teacher_config=args.dataset.parent/'teacher_config.json'
+        if not saved_teacher_config.exists() or json.loads(
+                saved_teacher_config.read_text(encoding='utf-8'))!=source:
+            raise ValueError('DAgger dataset and resolved teacher config do not match')
+        data=np.load(args.dataset,allow_pickle=False)
+        original_X,original_Y,original_groups,original_valid=[
+            data[k] for k in ('observations','actions','episode','successful')]
+        if not (len(original_X)==len(original_Y)==len(original_groups)==len(original_valid)):
+            raise ValueError('Original teacher dataset arrays have inconsistent lengths')
+        original_model,original_cfg,checkpoint=load_policy(args.init)
+        if asdict(original_cfg)!=asdict(cfg):
+            raise ValueError('Initial student environment config does not match resolved teacher config')
+        saved_mpc=checkpoint.get('extra',{}).get('mpc_config')
+        if saved_mpc!=asdict(mpc_config):
+            raise ValueError('Initial student MPC config does not match resolved teacher config')
+        if args.samples<args.episodes or args.episodes<1:
+            raise ValueError('Need at least one DAgger episode and samples >= episodes')
+        dagger_X,dagger_Y,local_groups,dagger_valid,student_actions,dagger_diagnostics=collect_dagger(
+            cfg,original_model,args.samples,args.episodes,args.seed,mpc_config.horizon,
+            base_params=base_params,mpc_config=mpc_config)
+        group_offset=int(np.max(original_groups))+1 if len(original_groups) else 0
+        dagger_groups=local_groups+group_offset
+        X=np.concatenate((original_X,dagger_X));Y=np.concatenate((original_Y,dagger_Y))
+        groups=np.concatenate((original_groups,dagger_groups))
+        valid=np.concatenate((original_valid,dagger_valid))
+        np.savez_compressed(out/'dagger_runs.npz',observations=dagger_X,actions=dagger_Y,
+                            episode=local_groups,successful=dagger_valid,
+                            student_actions=student_actions,
+                            episode_seeds=np.asarray([args.seed+1009*i for i in range(args.episodes)]))
+        np.savez_compressed(out/'combined_runs.npz',observations=X,actions=Y,
+                            episode=groups,successful=valid)
+        (out/'dagger_solver.json').write_text(json.dumps(dagger_diagnostics,indent=2))
+        (out/'dagger_config.json').write_text(json.dumps({
+            'schema_version':1,'source_teacher_config':str(args.resolved_teacher_config),
+            'source_dataset':str(args.dataset),'source_student':str(args.init),
+            'seed':args.seed,'dagger_samples_requested':args.samples,
+            'dagger_episodes_requested':args.episodes,
+            'episode_seeds':[args.seed+1009*i for i in range(args.episodes)],
+            'mpc_config':asdict(mpc_config),'env_config':asdict(cfg),
+            'plant_parameters':asdict(base_params),'plant_overrides':plant_overrides,
+            'original_samples':len(original_X),'dagger_samples_collected':len(dagger_X),
+            'dagger_successful_labels':int(dagger_valid.sum()),
+            'dagger_fallback_labels':int((~dagger_valid).sum()),
+            'combined_samples':len(X),'episode_group_offset':group_offset},indent=2))
+        model,fit=distill(X,Y,groups,valid,cfg,args.epochs,args.seed,initial_model=original_model)
+        fit.update({'original_samples':int(len(original_X)),
+                    'dagger_samples':int(len(dagger_X)),
+                    'dagger_successful_labels':int(dagger_valid.sum()),
+                    'dagger_fallback_labels':int((~dagger_valid).sum()),
+                    'combined_samples':int(len(X))})
+        (out/'dagger_fit.json').write_text(json.dumps(fit,indent=2))
         pc=PPOConfigV2(hidden_size=128,seed=args.seed);steps=len(X)
     else:
         if args.init:model,cfg,_=load_policy(args.init)
